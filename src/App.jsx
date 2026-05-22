@@ -82,6 +82,8 @@ const STORAGE_KEYS = {
   ratings: 'lgm_ratings',
   cookLogs: 'lgm_cooklogs',
   nonFood: 'lgm_nonfood',
+  mealHistory: 'lgm_meal_history',
+  manualCart: 'lgm_manual_cart',
 }
 
 const NONFOOD_CATEGORIES = [
@@ -103,6 +105,52 @@ const NONFOOD_UNITS = [
   'ml',
   'g',
 ]
+
+const AGE_GROUPS = [
+  { id: 'enfant', label: 'Enfant', icon: '🧒', desc: '< 12 ans' },
+  { id: 'ado', label: 'Ado', icon: '🧑', desc: '12-17 ans' },
+  { id: 'adulte', label: 'Adulte', icon: '👤', desc: '18-64 ans' },
+  { id: 'senior', label: 'Senior', icon: '🧓', desc: '65+ ans' },
+]
+
+const PREF_TAGS = [
+  { id: 'epice', label: '🌶️ Épicé' },
+  { id: 'fromage', label: '🧀 Fromage' },
+  { id: 'viande', label: '🥩 Viande' },
+  { id: 'poisson', label: '🐟 Poisson' },
+  { id: 'pates', label: '🍝 Pâtes' },
+  { id: 'legumes', label: '🥦 Légumes' },
+  { id: 'sucre', label: '🍯 Sucré' },
+  { id: 'grille', label: '🔥 Grillé' },
+]
+
+const RESTRICTION_TAGS = [
+  { id: 'vegetarien', label: '🌿 Végétarien' },
+  { id: 'vegan', label: '🌱 Végétalien' },
+  { id: 'sans_gluten', label: '🌾 Sans gluten' },
+  { id: 'sans_lactose', label: '🥛 Sans lactose' },
+  { id: 'allergie_noix', label: '🥜 Allergie noix' },
+  { id: 'sans_porc', label: '🐷 Sans porc' },
+  { id: 'sans_poisson', label: '🐟 Sans poisson' },
+  { id: 'halal', label: '☪️ Halal' },
+]
+
+const COOK_LEVELS = [
+  { id: 'debutant', label: '👶 Débutant' },
+  { id: 'amateur', label: '🧑‍🍳 Amateur' },
+  { id: 'confirme', label: '👨‍🍳 Confirmé' },
+]
+
+function getSeason() {
+  const m = new Date().getMonth()
+  if (m >= 2 && m <= 4)
+    return { label: 'Printemps 🌸', hint: 'asperges, radis, épinards, fraises, petits pois' }
+  if (m >= 5 && m <= 7)
+    return { label: 'Été ☀️', hint: 'tomates, courgettes, aubergines, poivrons, abricots, pêches' }
+  if (m >= 8 && m <= 10)
+    return { label: 'Automne 🍂', hint: 'potiron, champignons, pommes, poires, châtaignes' }
+  return { label: 'Hiver ❄️', hint: 'poireaux, choux, carottes, betteraves, oranges, clémentines' }
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 function getDaysLeft(dlc) {
@@ -347,6 +395,96 @@ function Card({ children, accent = false, style = {} }) {
 }
 
 // ─── Main App ──────────────────────────────────────────────────────────────
+// ── Manuel Cart Add Component ──────────────────────────────────
+function ManualCartAdd({ onAdd }) {
+  const [nom, setNom] = useState('')
+  const [quantity, setQuantity] = useState('')
+  const [unit, setUnit] = useState('pièce(s)')
+
+  const submit = () => {
+    if (!nom.trim()) return
+    onAdd({ nom: nom.trim(), quantity: quantity || '1', unit })
+    setNom('')
+    setQuantity('')
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+      <input
+        placeholder='Nutella, Pain de mie...'
+        value={nom}
+        onChange={(e) => setNom(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+        dir='ltr'
+        autoComplete='off'
+        style={{
+          flex: 2,
+          background: '#faf7f0',
+          border: `1.5px solid #c4af90`,
+          borderRadius: '10px',
+          padding: '9px 11px',
+          color: '#3a2a1a',
+          fontSize: '14px',
+          fontFamily: "'Lato',sans-serif",
+          outline: 'none',
+        }}
+      />
+      <input
+        placeholder='Qté'
+        value={quantity}
+        onChange={(e) => setQuantity(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+        style={{
+          width: '52px',
+          background: '#faf7f0',
+          border: `1.5px solid #c4af90`,
+          borderRadius: '10px',
+          padding: '9px 8px',
+          color: '#3a2a1a',
+          fontSize: '13px',
+          fontFamily: "'Lato',sans-serif",
+          outline: 'none',
+          textAlign: 'center',
+        }}
+      />
+      <select
+        value={unit}
+        onChange={(e) => setUnit(e.target.value)}
+        style={{
+          width: '72px',
+          background: '#faf7f0',
+          border: `1.5px solid #c4af90`,
+          borderRadius: '10px',
+          padding: '9px 4px',
+          color: '#3a2a1a',
+          fontSize: '11px',
+          fontFamily: "'Lato',sans-serif",
+        }}
+      >
+        {['pièce(s)', 'g', 'kg', 'ml', 'L', 'boîte(s)', 'sachet(s)', 'rouleau(x)'].map((u) => (
+          <option key={u}>{u}</option>
+        ))}
+      </select>
+      <button
+        onClick={submit}
+        style={{
+          background: 'linear-gradient(135deg,#4a7c59,#6a9e78)',
+          color: '#fff',
+          border: 'none',
+          borderRadius: '10px',
+          padding: '9px 14px',
+          fontSize: '16px',
+          fontWeight: 700,
+          cursor: 'pointer',
+          flexShrink: 0,
+        }}
+      >
+        +
+      </button>
+    </div>
+  )
+}
+
 export default function App() {
   const [tab, setTab] = useState('frigo')
   const [ingredients, setIngredients] = useStorage(STORAGE_KEYS.ingredients, [])
@@ -356,13 +494,15 @@ export default function App() {
   const [ratings, setRatings] = useStorage(STORAGE_KEYS.ratings, [])
   const [cookLogs, setCookLogs] = useStorage(STORAGE_KEYS.cookLogs, [])
   const [nonFood, setNonFood] = useStorage(STORAGE_KEYS.nonFood, [])
+  const [mealHistory, setMealHistory] = useStorage(STORAGE_KEYS.mealHistory, [])
+  const [manualCart, setManualCart] = useStorage(STORAGE_KEYS.manualCart, [])
 
   // Ticket scan state
   const [showScanPanel, setShowScanPanel] = useState(false)
   const [scanLoading, setScanLoading] = useState(false)
-  const [scanResult, setScanResult] = useState(null) // { food:[], nonFood:[], enseigne, lieu }
-  const [scanConfirm, setScanConfirm] = useState(null) // items à confirmer
-  const [fridgeSubTab, setFridgeSubTab] = useState('food') // "food" | "maison"
+  const [scanResult, setScanResult] = useState(null)
+  const [scanConfirm, setScanConfirm] = useState(null)
+  const [fridgeSubTab, setFridgeSubTab] = useState('food')
 
   // Adapt panel state
   const [adaptTarget, setAdaptTarget] = useState(null)
@@ -392,6 +532,11 @@ export default function App() {
   const [showAddEq, setShowAddEq] = useState(false)
   const [newEq, setNewEq] = useState({ id: '', custom: '', model: '' })
 
+  // Convive profile editing
+  const [editingUser, setEditingUser] = useState(null) // userId being edited
+  const [cuisinierId, setCuisinierIdState] = useState(null) // who's cooking tonight
+  const lastTapRef = useRef({}) // for double-tap detection
+
   // Recipe state
   const [energyLevel, setEnergyLevel] = useState('faible')
   const [timeAvail, setTimeAvail] = useState('20')
@@ -399,12 +544,18 @@ export default function App() {
   const [recipeResult, setRecipeResult] = useState(null)
   const [recipeLoading, setRecipeLoading] = useState(false)
   const [expandedRecipe, setExpandedRecipe] = useState(null)
-  const [recipePortions, setRecipePortions] = useState({}) // { [recipeId]: number }
+  const [recipePortions, setRecipePortions] = useState({})
   const recipeResultRef = useRef(null)
-  const [selectedConvives, setSelectedConvives] = useState([]) // userIds
+  const [selectedConvives, setSelectedConvives] = useState([])
+
+  // Mode soirée / budget / vide-frigo
+  const [modeSoiree, setModeSoiree] = useState(false)
+  const [guestCount, setGuestCount] = useState(4)
+  const [weeklyBudget, setWeeklyBudget] = useState('')
+  const [modeVideFrigo, setModeVideFrigo] = useState(false)
 
   // Rating state
-  const [ratingTarget, setRatingTarget] = useState(null) // { recipeId, recipeName }
+  const [ratingTarget, setRatingTarget] = useState(null)
   const [newRating, setNewRating] = useState({ userId: '', note: '', stars: 0, comment: '' })
   const [showRatingPanel, setShowRatingPanel] = useState(false)
 
@@ -591,54 +742,61 @@ Règles :
     setShowRecipeAnalysis(true)
     try {
       const base64 = await compressImage(file)
-
       const inventaire =
         ingredients.map((i) => `${i.name} (${i.quantity}${i.unit})`).join(', ') || 'Inventaire vide'
+      const equipmentList = equipment.map((e) => e.label).join(', ') || 'Équipement de base'
 
-      const prompt = `Tu es un chef cuisinier. Analyse cette photo de recette de cuisine et croise avec l'inventaire disponible.
+      const prompt = `Tu es un chef cuisinier intelligent. Analyse cette photo de recette et croise avec l'inventaire.
 
-INVENTAIRE DISPONIBLE :
-${inventaire}
+INVENTAIRE DISPONIBLE : ${inventaire}
+ÉQUIPEMENT : ${equipmentList}
 
-Identifie tous les ingrédients de la recette visible sur la photo.
-Pour chaque ingrédient, détermine s'il est disponible dans l'inventaire, substituable, ou manquant.
+Pour chaque ingrédient manquant, applique ces règles de proportions intelligentes :
+- Ingrédients de base très utilisés (œufs, oignons, ail, pommes de terre, carottes, pâtes, riz) : GONFLE les quantités (x2 ou x3) car ça se conserve et c'est toujours utile
+- Si l'user a un air fryer ou congélateur : gonfle encore plus les féculents et viandes
+- Liquides (lait, crème, huile), épices, herbes fraîches : NE PAS gonfler, juste la quantité exacte
+- Indique dans "note_quantite" pourquoi tu as gonflé si tu l'as fait
 
 Réponds UNIQUEMENT en JSON valide :
 {
-  "nom_recette": "Nom de la recette identifiée",
+  "nom_recette": "Nom identifié",
   "portions_recette": 4,
   "ingredients": [
     {
       "nom": "Œufs",
-      "quantite": "4",
+      "quantite_recette": "2",
+      "quantite_course": "6",
       "unite": "pièce(s)",
-      "statut": "disponible",
-      "note": "Tu en as 6 dans ton inventaire"
+      "statut": "manquant",
+      "note": "Quantité gonflée — les œufs se conservent 3 semaines",
+      "note_quantite": "x3 car base du frigo"
     },
     {
       "nom": "Crème fraîche",
-      "quantite": "200",
+      "quantite_recette": "200",
+      "quantite_course": "200",
       "unite": "ml",
       "statut": "substituable",
       "substitut": "Yaourt grec",
-      "note": "Le yaourt grec que tu as fonctionne très bien ici"
+      "note": "Le yaourt grec fonctionne ici"
     },
     {
-      "nom": "Lardons fumés",
-      "quantite": "150",
+      "nom": "Lardons",
+      "quantite_recette": "150",
+      "quantite_course": "150",
       "unite": "g",
-      "statut": "manquant",
-      "note": "À ajouter à ta liste de courses"
+      "statut": "disponible",
+      "note": "Tu en as dans ton frigo"
     }
   ],
-  "conseil_chef": "Un conseil global pour réussir cette recette"
+  "conseil_chef": "Conseil global"
 }
 
-Statuts possibles : "disponible", "substituable", "manquant"`
+Statuts : "disponible", "substituable", "manquant"`
 
       const res = await fetch('/gardemanger/api-proxy.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-proxy-token': 'lgm_2024_xK9mP3' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           proxy_token: 'lgm_2024_xK9mP3',
           model: 'claude-sonnet-4-5',
@@ -667,6 +825,41 @@ Statuts possibles : "disponible", "substituable", "manquant"`
     setRecipeAnalysisLoading(false)
   }
 
+  const addSingleToShoppingList = (ing) => {
+    setShoppingLists((p) => {
+      // Cherche une liste "Recette en cours" existante ou en crée une
+      const existing = p.find((l) => l.goal === `Recette : ${recipeAnalysisResult?.nom_recette}`)
+      const item = {
+        nom: ing.nom,
+        quantite: `${ing.quantite_course || ing.quantite_recette} ${ing.unite}`,
+        conseil: ing.note || '',
+        prix_estime: '',
+      }
+      if (existing) {
+        return p.map((l) => {
+          if (l.goal !== `Recette : ${recipeAnalysisResult?.nom_recette}`) return l
+          const cats = l.categories.map((c) =>
+            c.nom === 'Ingrédients manquants' ? { ...c, items: [...c.items, item] } : c
+          )
+          return { ...l, categories: cats }
+        })
+      }
+      return [
+        {
+          id: Date.now(),
+          goal: `Recette : ${recipeAnalysisResult?.nom_recette}`,
+          titre: recipeAnalysisResult?.nom_recette,
+          budget_estime: 'À estimer',
+          repas_couverts: `${recipeAnalysisResult?.portions_recette || '?'} portions`,
+          categories: [{ nom: 'Ingrédients manquants', items: [item] }],
+          conseils: [],
+          checked: {},
+        },
+        ...p,
+      ]
+    })
+  }
+
   const addMissingToShoppingList = () => {
     if (!recipeAnalysisResult?.ingredients) return
     const missing = recipeAnalysisResult.ingredients.filter((i) => i.statut === 'manquant')
@@ -682,8 +875,8 @@ Statuts possibles : "disponible", "substituable", "manquant"`
           nom: 'Ingrédients manquants',
           items: missing.map((i) => ({
             nom: i.nom,
-            quantite: `${i.quantite} ${i.unite}`,
-            conseil: i.note,
+            quantite: `${i.quantite_course || i.quantite_recette} ${i.unite}`,
+            conseil: i.note || '',
             prix_estime: '',
           })),
         },
@@ -692,7 +885,6 @@ Statuts possibles : "disponible", "substituable", "manquant"`
       checked: {},
     }
     setShoppingLists((p) => [newList, ...p])
-    setActiveList(newList.id)
     setShowRecipeAnalysis(false)
     setRecipeAnalysisResult(null)
     setTab('courses')
@@ -718,6 +910,54 @@ Statuts possibles : "disponible", "substituable", "manquant"`
   const toggleObjective = (id) =>
     setObjectives((p) => (p.includes(id) ? p.filter((o) => o !== id) : [...p, id]))
 
+  // ── Convive helpers
+  const handleConviveTap = (uid) => {
+    const now = Date.now()
+    const last = lastTapRef.current[uid] || 0
+    lastTapRef.current[uid] = now
+    if (now - last < 400) {
+      // Double tap → cuisinier du soir
+      setCuisinierIdState((p) => (p === uid ? null : uid))
+      if (!selectedConvives.includes(uid)) setSelectedConvives((p) => [...p, uid])
+    } else {
+      // Simple tap → mange ce soir
+      setSelectedConvives((p) => (p.includes(uid) ? p.filter((x) => x !== uid) : [...p, uid]))
+    }
+  }
+
+  const updateUserProfile = (uid, field, value) => {
+    setUsers((p) => p.map((u) => (u.id === uid ? { ...u, [field]: value } : u)))
+  }
+
+  const toggleUserTag = (uid, field, tagId) => {
+    setUsers((p) =>
+      p.map((u) => {
+        if (u.id !== uid) return u
+        const arr = u[field] || []
+        return {
+          ...u,
+          [field]: arr.includes(tagId) ? arr.filter((t) => t !== tagId) : [...arr, tagId],
+        }
+      })
+    )
+  }
+
+  const addToHistory = (recipeName) => {
+    setMealHistory((p) =>
+      [
+        {
+          id: Date.now(),
+          name: recipeName,
+          date: new Date().toISOString(),
+          convives: selectedConvives
+            .map((id) => users.find((u) => u.id === id)?.name)
+            .filter(Boolean),
+        },
+        ...p,
+      ].slice(0, 50)
+    ) // garde 50 repas max
+  }
+
   const getPortions = (recipe) => recipePortions[recipe.id] || recipe.portions || 2
   const setPortions = (recipeId, basePortions, val) => {
     const clamped = Math.max(1, Math.min(20, val))
@@ -736,30 +976,65 @@ Statuts possibles : "disponible", "substituable", "manquant"`
     setExpandedRecipe(null)
     setRecipePortions({})
 
+    const season = getSeason()
     const eqList =
       equipment.map((e) => `${e.label}${e.model ? ` (${e.model})` : ''}`).join(', ') ||
       'Équipement de base'
-    const ingList = ingredients
-      .map((i) => {
-        const d = getDaysLeft(i.dlc)
-        return `${i.name} (${i.quantity}${i.unit}${d !== null && d <= 2 ? ' ⚠️À utiliser vite' : ''})`
-      })
-      .join('\n')
+    const eLvl = ENERGY_LEVELS.find((e) => e.id === energyLevel)?.label || energyLevel
     const objList =
       objectives
         .map((o) => OBJECTIVES.find((x) => x.id === o)?.label)
         .filter(Boolean)
         .join(', ') || 'Aucun'
-    const eLvl = ENERGY_LEVELS.find((e) => e.id === energyLevel)?.label || energyLevel
 
-    const convivesNames = selectedConvives
-      .map((id) => users.find((u) => u.id === id)?.name)
-      .filter(Boolean)
+    // Ingrédients — mode vide-frigo priorise les expirants
+    const ingList = ingredients
+      .map((i) => {
+        const d = getDaysLeft(i.dlc)
+        const urgent = d !== null && d <= 2
+        return `${i.name} (${i.quantity}${i.unit}${urgent ? ' ⚠️URGENT' : ''})`
+      })
+      .join('\n')
+
+    // Profils convives enrichis
     const convivesContext =
-      convivesNames.length > 0 ? `\nCONVIVES : ${convivesNames.join(', ')}` : ''
+      selectedConvives.length > 0
+        ? '\n\nCONVIVES CE SOIR :\n' +
+          selectedConvives
+            .map((id) => {
+              const u = users.find((u) => u.id === id)
+              if (!u) return null
+              const age = AGE_GROUPS.find((a) => a.id === u.age_group)?.label || 'Adulte'
+              const prefs = (u.preferences || [])
+                .map((p) => PREF_TAGS.find((t) => t.id === p)?.label)
+                .filter(Boolean)
+                .join(', ')
+              const restr = (u.restrictions || [])
+                .map((r) => RESTRICTION_TAGS.find((t) => t.id === r)?.label)
+                .filter(Boolean)
+                .join(', ')
+              const level = COOK_LEVELS.find((l) => l.id === u.cook_level)?.label || ''
+              const isCook = id === cuisinierId
+              return `- ${u.name} (${age}${isCook ? ' 👨‍🍳 CUISINIER DU SOIR' : ''})${level ? ' niveau ' + level : ''}${prefs ? ' | Aime: ' + prefs : ''}${restr ? ' | RESTRICTIONS: ' + restr : ''}`
+            })
+            .filter(Boolean)
+            .join('\n')
+        : ''
+
+    // Historique repas récents (éviter répétitions)
+    const historyContext =
+      mealHistory.length > 0
+        ? '\n\nREPAS DES 7 DERNIERS JOURS (évite les répétitions) :\n' +
+          mealHistory
+            .slice(0, 7)
+            .map((m) => m.name)
+            .join(', ')
+        : ''
+
+    // Notes et retours
     const ratingContext =
       ratings.length > 0
-        ? '\n\nHISTORIQUE DES NOTES (tiens compte de ces préférences) :\n' +
+        ? '\n\nPRÉFÉRENCES NOTÉES :\n' +
           ratings
             .slice(-10)
             .map(
@@ -768,20 +1043,39 @@ Statuts possibles : "disponible", "substituable", "manquant"`
             )
             .join('\n')
         : ''
-
     const cookContext =
       cookLogs.length > 0
-        ? '\n\nRETOURS DU CUISINIER (tiens compte de ces difficultés) :\n' +
+        ? '\n\nRETOURS CUISINIER :\n' +
           cookLogs
             .slice(-5)
             .map(
               (l) =>
-                `${l.recipeName}${l.difficulty ? ` — Difficulté: ${l.difficulty}` : ''}${l.remark ? ` — Remarque: ${l.remark}` : ''}`
+                `${l.recipeName}${l.difficulty ? ` — ${l.difficulty}` : ''}${l.remark ? ` — ${l.remark}` : ''}`
             )
             .join('\n')
         : ''
 
-    const prompt = `Tu es un chef cuisinier bienveillant qui aide un cuisinier apprenti. Parle simplement, sans jargon (ou explique-le).
+    // Mode soirée
+    const soireeContext = modeSoiree
+      ? `\n\nMODE SOIRÉE : ${guestCount} personnes. Génère un menu complet : entrée + plat + dessert (3 recettes).`
+      : ''
+
+    // Budget
+    const budgetContext = weeklyBudget
+      ? `\n\nBUDGET SEMAINE : ${weeklyBudget}€ — privilégie les recettes économiques.`
+      : ''
+
+    // Mode vide-frigo
+    const videContext = modeVideFrigo
+      ? '\n\nMODE VIDE-FRIGO : PRIORITÉ ABSOLUE aux ingrédients marqués ⚠️URGENT. Utilise-les tous si possible.'
+      : ''
+
+    // Saison
+    const seasonContext = `\n\nSAISON : ${season.label}. Légumes/fruits de saison à privilégier : ${season.hint}.`
+
+    const portions = modeSoiree ? guestCount : selectedConvives.length || 2
+
+    const prompt = `Tu es un chef cuisinier bienveillant. Parle simplement, sans jargon technique.
 
 INGRÉDIENTS DISPONIBLES :
 ${ingList}
@@ -789,9 +1083,10 @@ ${ingList}
 ÉQUIPEMENT : ${eqList}
 NIVEAU D'ÉNERGIE : ${eLvl}
 TEMPS DISPONIBLE : ${timeAvail} minutes
-OBJECTIFS : ${objList}${convivesContext}${ratingContext}${cookContext}
+OBJECTIFS : ${objList}${convivesContext}${historyContext}${ratingContext}${cookContext}${soireeContext}${budgetContext}${videContext}${seasonContext}
 
-Génère exactement 3 recettes. Réponds UNIQUEMENT en JSON valide :
+Génère exactement 3 recettes pour ${portions} personnes. ${modeSoiree ? 'Une entrée, un plat, un dessert.' : ''}
+Réponds UNIQUEMENT en JSON valide :
 
 {
   "recettes": [
@@ -799,17 +1094,19 @@ Génère exactement 3 recettes. Réponds UNIQUEMENT en JSON valide :
       "id": "unique_id_1",
       "nom": "Nom de la recette",
       "emoji": "🍳",
+      "type": "plat",
       "temps": 15,
       "difficulte": "facile",
-      "portions": 2,
+      "portions": ${portions},
       "conservation_label": "Se conserve 5 jours au frigo",
+      "de_saison": true,
+      "budget_estime": "3-5€",
       "objectifs_couverts": ["rapide"],
       "description": "Description courte et appétissante",
       "ingredients_detail": [
-        { "nom": "Œufs", "quantite": 3, "unite": "pièce(s)" },
-        { "nom": "Lardons", "quantite": 100, "unite": "g" }
+        { "nom": "Œufs", "quantite": 3, "unite": "pièce(s)" }
       ],
-      "etapes": ["Étape 1 avec quantités précises ex: Battre les 3 œufs", "Étape 2"],
+      "etapes": ["Étape 1", "Étape 2"],
       "conseil": "Un conseil pratique",
       "termes_expliques": {}
     }
@@ -1867,31 +2164,104 @@ Réponds UNIQUEMENT en JSON valide :
                               marginBottom: '6px',
                             }}
                           >
-                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                              <span style={{ fontWeight: 700, fontSize: '13px', color: C.text }}>
-                                {ing.nom}
-                              </span>
-                              <span style={{ fontSize: '11px', color: C.textMid }}>
-                                {ing.quantite} {ing.unite}
-                              </span>
+                            <div
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'flex-start',
+                              }}
+                            >
+                              <div style={{ flex: 1 }}>
+                                <span style={{ fontWeight: 700, fontSize: '13px', color: C.text }}>
+                                  {ing.nom}
+                                </span>
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    gap: '6px',
+                                    alignItems: 'center',
+                                    marginTop: '2px',
+                                    flexWrap: 'wrap',
+                                  }}
+                                >
+                                  {/* Quantité recette */}
+                                  <span style={{ fontSize: '11px', color: C.textMid }}>
+                                    Recette : {ing.quantite_recette || ing.quantite} {ing.unite}
+                                  </span>
+                                  {/* Quantité gonflée si différente */}
+                                  {ing.quantite_course &&
+                                    ing.quantite_course !== ing.quantite_recette && (
+                                      <span
+                                        style={{
+                                          fontSize: '11px',
+                                          fontWeight: 700,
+                                          color: C.terra,
+                                          background: `${C.terra}15`,
+                                          padding: '1px 6px',
+                                          borderRadius: '8px',
+                                        }}
+                                      >
+                                        → À acheter : {ing.quantite_course} {ing.unite}
+                                      </span>
+                                    )}
+                                </div>
+                                {ing.note_quantite && (
+                                  <div
+                                    style={{
+                                      fontSize: '10px',
+                                      color: C.terra,
+                                      marginTop: '2px',
+                                      fontStyle: 'italic',
+                                    }}
+                                  >
+                                    💡 {ing.note_quantite}
+                                  </div>
+                                )}
+                                {ing.substitut && (
+                                  <div
+                                    style={{ fontSize: '11px', color: '#d4a017', marginTop: '2px' }}
+                                  >
+                                    → Utilise : {ing.substitut}
+                                  </div>
+                                )}
+                                {ing.note && (
+                                  <div
+                                    style={{
+                                      fontSize: '11px',
+                                      color: C.textLight,
+                                      marginTop: '2px',
+                                      fontStyle: 'italic',
+                                    }}
+                                  >
+                                    {ing.note}
+                                  </div>
+                                )}
+                              </div>
+                              {/* Bouton + pour ajouter à la liste */}
+                              {statut === 'manquant' && (
+                                <button
+                                  onClick={() => addSingleToShoppingList(ing)}
+                                  style={{
+                                    background: C.terra,
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    color: '#fff',
+                                    fontWeight: 700,
+                                    fontSize: '16px',
+                                    width: '28px',
+                                    height: '28px',
+                                    cursor: 'pointer',
+                                    flexShrink: 0,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    marginLeft: '8px',
+                                  }}
+                                >
+                                  +
+                                </button>
+                              )}
                             </div>
-                            {ing.substitut && (
-                              <div style={{ fontSize: '11px', color: '#d4a017', marginTop: '2px' }}>
-                                → Utilise : {ing.substitut}
-                              </div>
-                            )}
-                            {ing.note && (
-                              <div
-                                style={{
-                                  fontSize: '11px',
-                                  color: C.textLight,
-                                  marginTop: '2px',
-                                  fontStyle: 'italic',
-                                }}
-                              >
-                                {ing.note}
-                              </div>
-                            )}
                           </div>
                         ))}
                       </div>
@@ -2075,7 +2445,6 @@ Réponds UNIQUEMENT en JSON valide :
                   fontFamily: "'Lato',sans-serif",
                   outline: 'none',
                   WebkitTextFillColor: C.text,
-                  opacity: 1,
                 }}
               />
               <button
@@ -2097,6 +2466,7 @@ Réponds UNIQUEMENT en JSON valide :
             </div>
           </Card>
         )}
+
         {users.length === 0 ? (
           <Card>
             <div
@@ -2107,45 +2477,327 @@ Réponds UNIQUEMENT en JSON valide :
                 padding: '12px 0',
               }}
             >
-              Ajoute les convives pour noter les recettes ensemble
+              Ajoute les convives pour des recettes personnalisées
             </div>
           </Card>
         ) : (
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {[...users].map((u) => (
+          users.map((u) => (
+            <Card key={u.id} style={{ marginBottom: '10px' }}>
+              {/* Header convive */}
               <div
-                key={u.id}
                 style={{
                   display: 'flex',
+                  justifyContent: 'space-between',
                   alignItems: 'center',
-                  gap: '6px',
-                  background: C.bgInset,
-                  borderRadius: '20px',
-                  padding: '6px 12px',
-                  border: `1px solid ${C.border}`,
+                  marginBottom: '10px',
                 }}
               >
-                <span style={{ fontSize: '13px', fontWeight: 600, color: C.brown }}>
-                  👤 {u.name}
-                </span>
-                <button
-                  onClick={() => setUsers((p) => p.filter((x) => x.id !== u.id))}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: C.border,
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    padding: '0 0 0 4px',
-                  }}
-                >
-                  ×
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '20px' }}>
+                    {AGE_GROUPS.find((a) => a.id === u.age_group)?.icon || '👤'}
+                  </span>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '14px', color: C.brown }}>
+                      {u.name}
+                    </div>
+                    {u.cook_level && (
+                      <div style={{ fontSize: '10px', color: C.textLight }}>
+                        {COOK_LEVELS.find((l) => l.id === u.cook_level)?.label}
+                      </div>
+                    )}
+                  </div>
+                  {/* Note moyenne */}
+                  {ratings.filter((r) => r.userId === u.id).length > 0 && (
+                    <span style={{ fontSize: '11px', color: C.star }}>
+                      ★{' '}
+                      {(
+                        ratings.filter((r) => r.userId === u.id).reduce((s, r) => s + r.stars, 0) /
+                        ratings.filter((r) => r.userId === u.id).length
+                      ).toFixed(1)}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button
+                    onClick={() => setEditingUser(editingUser === u.id ? null : u.id)}
+                    style={{
+                      background: 'none',
+                      border: `1px solid ${C.border}`,
+                      borderRadius: '8px',
+                      color: C.textMid,
+                      fontSize: '11px',
+                      padding: '4px 8px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {editingUser === u.id ? '✕' : '✏️ Profil'}
+                  </button>
+                  <button
+                    onClick={() => setUsers((p) => p.filter((x) => x.id !== u.id))}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: C.border,
+                      cursor: 'pointer',
+                      fontSize: '16px',
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
-            ))}
-          </div>
+
+              {/* Profil éditable */}
+              {editingUser === u.id && (
+                <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: '12px' }}>
+                  {/* Tranche d'âge */}
+                  <div style={{ marginBottom: '10px' }}>
+                    <div
+                      style={{
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        color: C.textLight,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.8px',
+                        marginBottom: '6px',
+                      }}
+                    >
+                      Tranche d'âge
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {AGE_GROUPS.map((a) => (
+                        <button
+                          key={a.id}
+                          onClick={() => updateUserProfile(u.id, 'age_group', a.id)}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: '20px',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            border:
+                              u.age_group === a.id
+                                ? `1.5px solid ${C.brown}`
+                                : `1px solid ${C.border}`,
+                            background: u.age_group === a.id ? `${C.brown}15` : C.bgInset,
+                            color: u.age_group === a.id ? C.brown : C.textLight,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {a.icon} {a.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Niveau cuisine */}
+                  <div style={{ marginBottom: '10px' }}>
+                    <div
+                      style={{
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        color: C.textLight,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.8px',
+                        marginBottom: '6px',
+                      }}
+                    >
+                      Niveau cuisine
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      {COOK_LEVELS.map((l) => (
+                        <button
+                          key={l.id}
+                          onClick={() => updateUserProfile(u.id, 'cook_level', l.id)}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: '20px',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            border:
+                              u.cook_level === l.id
+                                ? `1.5px solid ${C.green}`
+                                : `1px solid ${C.border}`,
+                            background: u.cook_level === l.id ? `${C.green}15` : C.bgInset,
+                            color: u.cook_level === l.id ? C.green : C.textLight,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {l.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Préférences */}
+                  <div style={{ marginBottom: '10px' }}>
+                    <div
+                      style={{
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        color: C.green,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.8px',
+                        marginBottom: '6px',
+                      }}
+                    >
+                      + Aime
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {PREF_TAGS.map((tag) => (
+                        <button
+                          key={tag.id}
+                          onClick={() => toggleUserTag(u.id, 'preferences', tag.id)}
+                          style={{
+                            padding: '5px 9px',
+                            borderRadius: '16px',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            border: (u.preferences || []).includes(tag.id)
+                              ? `1.5px solid ${C.green}`
+                              : `1px solid ${C.border}`,
+                            background: (u.preferences || []).includes(tag.id)
+                              ? `${C.green}15`
+                              : C.bgInset,
+                            color: (u.preferences || []).includes(tag.id) ? C.green : C.textLight,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {tag.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Restrictions */}
+                  <div>
+                    <div
+                      style={{
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        color: C.terra,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.8px',
+                        marginBottom: '6px',
+                      }}
+                    >
+                      — Restrictions / Allergies
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {RESTRICTION_TAGS.map((tag) => (
+                        <button
+                          key={tag.id}
+                          onClick={() => toggleUserTag(u.id, 'restrictions', tag.id)}
+                          style={{
+                            padding: '5px 9px',
+                            borderRadius: '16px',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            border: (u.restrictions || []).includes(tag.id)
+                              ? `1.5px solid ${C.terra}`
+                              : `1px solid ${C.border}`,
+                            background: (u.restrictions || []).includes(tag.id)
+                              ? `${C.terra}15`
+                              : C.bgInset,
+                            color: (u.restrictions || []).includes(tag.id) ? C.terra : C.textLight,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {tag.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tags résumé si pas en édition */}
+              {editingUser !== u.id && (
+                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                  {(u.preferences || []).map((p) => (
+                    <span
+                      key={p}
+                      style={{
+                        fontSize: '10px',
+                        padding: '2px 6px',
+                        borderRadius: '8px',
+                        background: `${C.green}15`,
+                        color: C.green,
+                      }}
+                    >
+                      {PREF_TAGS.find((t) => t.id === p)?.label}
+                    </span>
+                  ))}
+                  {(u.restrictions || []).map((r) => (
+                    <span
+                      key={r}
+                      style={{
+                        fontSize: '10px',
+                        padding: '2px 6px',
+                        borderRadius: '8px',
+                        background: `${C.terra}15`,
+                        color: C.terra,
+                      }}
+                    >
+                      {RESTRICTION_TAGS.find((t) => t.id === r)?.label}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </Card>
+          ))
         )}
       </div>
+
+      {/* Historique repas */}
+      {mealHistory.length > 0 && (
+        <div style={{ marginTop: '20px' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '10px',
+            }}
+          >
+            <SectionLabel>Historique repas</SectionLabel>
+            <button
+              onClick={() => setMealHistory([])}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: C.textLight,
+                fontSize: '11px',
+                cursor: 'pointer',
+              }}
+            >
+              Effacer
+            </button>
+          </div>
+          <Card>
+            {mealHistory.slice(0, 7).map((m, i) => (
+              <div
+                key={m.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  padding: '6px 0',
+                  borderBottom:
+                    i < Math.min(mealHistory.length, 7) - 1 ? `1px solid ${C.border}` : 'none',
+                }}
+              >
+                <span style={{ fontSize: '13px', color: C.text }}>{m.name}</span>
+                <span style={{ fontSize: '11px', color: C.textLight }}>
+                  {new Date(m.date).toLocaleDateString('fr-FR', {
+                    weekday: 'short',
+                    day: 'numeric',
+                    month: 'short',
+                  })}
+                </span>
+              </div>
+            ))}
+          </Card>
+        </div>
+      )}
     </div>
   )
 
@@ -2216,25 +2868,55 @@ Réponds UNIQUEMENT en JSON valide :
       {/* Convives + Checklist sur la même carte */}
       <Card style={{ background: `${C.bgDeep}` }}>
         {users.length > 0 && (
-          <div style={{ marginBottom: '10px' }}>
-            <SectionLabel>Pour qui ?</SectionLabel>
+          <div style={{ marginBottom: '12px' }}>
+            <div
+              style={{
+                fontSize: '10px',
+                fontWeight: 700,
+                color: C.textLight,
+                textTransform: 'uppercase',
+                letterSpacing: '0.8px',
+                marginBottom: '4px',
+              }}
+            >
+              Pour qui ? (2× tap = cuisinier 👨‍🍳)
+            </div>
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-              {users.map((u) => (
-                <button
-                  key={u.id}
-                  style={st.objBtn(selectedConvives.includes(u.id))}
-                  onClick={() =>
-                    setSelectedConvives((p) =>
-                      p.includes(u.id) ? p.filter((x) => x !== u.id) : [...p, u.id]
-                    )
-                  }
-                >
-                  👤 {u.name}
-                </button>
-              ))}
+              {users.map((u) => {
+                const selected = selectedConvives.includes(u.id)
+                const isCook = cuisinierId === u.id
+                const age = AGE_GROUPS.find((a) => a.id === u.age_group)
+                return (
+                  <button
+                    key={u.id}
+                    onClick={() => handleConviveTap(u.id)}
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: '20px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      border: isCook
+                        ? `2px solid ${C.terra}`
+                        : selected
+                          ? `1.5px solid ${C.brown}`
+                          : `1px solid ${C.border}`,
+                      background: isCook ? `${C.terra}20` : selected ? `${C.brown}15` : C.bgInset,
+                      color: isCook ? C.terra : selected ? C.brown : C.textLight,
+                      cursor: 'pointer',
+                      position: 'relative',
+                    }}
+                  >
+                    {age?.icon || '👤'} {u.name} {isCook ? '👨‍🍳' : ''}
+                    {(u.restrictions || []).length > 0 && (
+                      <span style={{ fontSize: '9px', marginLeft: '4px' }}>⚠️</span>
+                    )}
+                  </button>
+                )
+              })}
             </div>
           </div>
         )}
+
         <SectionLabel>Prêt à générer ?</SectionLabel>
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
           {[
@@ -2255,6 +2937,202 @@ Réponds UNIQUEMENT en JSON valide :
               </span>
             </div>
           ))}
+        </div>
+      </Card>
+
+      {/* Modes spéciaux */}
+      <Card>
+        <SectionLabel>Modes spéciaux</SectionLabel>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {/* Mode soirée */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '8px 10px',
+              borderRadius: '10px',
+              background: modeSoiree ? `${C.brown}10` : C.bgInset,
+              border: `1px solid ${modeSoiree ? C.brown : C.border}`,
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color: modeSoiree ? C.brown : C.textMid,
+                }}
+              >
+                🥂 Mode soirée
+              </div>
+              <div style={{ fontSize: '10px', color: C.textLight }}>
+                Menu entrée + plat + dessert
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {modeSoiree && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <button
+                    onClick={() => setGuestCount((p) => Math.max(2, p - 1))}
+                    style={{
+                      width: '24px',
+                      height: '24px',
+                      borderRadius: '50%',
+                      border: `1px solid ${C.border}`,
+                      background: C.bgCard,
+                      color: C.brown,
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                    }}
+                  >
+                    −
+                  </button>
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: C.brown }}>
+                    {guestCount}
+                  </span>
+                  <button
+                    onClick={() => setGuestCount((p) => Math.min(20, p + 1))}
+                    style={{
+                      width: '24px',
+                      height: '24px',
+                      borderRadius: '50%',
+                      border: `1px solid ${C.border}`,
+                      background: C.bgCard,
+                      color: C.brown,
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={() => setModeSoiree((p) => !p)}
+                style={{
+                  padding: '5px 10px',
+                  borderRadius: '12px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  border: 'none',
+                  background: modeSoiree ? C.brown : 'transparent',
+                  color: modeSoiree ? '#fff' : C.textLight,
+                  cursor: 'pointer',
+                  border: `1px solid ${modeSoiree ? C.brown : C.border}`,
+                }}
+              >
+                {modeSoiree ? 'ON' : 'OFF'}
+              </button>
+            </div>
+          </div>
+
+          {/* Mode vide-frigo */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '8px 10px',
+              borderRadius: '10px',
+              background: modeVideFrigo ? `${C.terra}10` : C.bgInset,
+              border: `1px solid ${modeVideFrigo ? C.terra : C.border}`,
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color: modeVideFrigo ? C.terra : C.textMid,
+                }}
+              >
+                ♻️ Vide-frigo
+              </div>
+              <div style={{ fontSize: '10px', color: C.textLight }}>
+                Priorité aux produits qui expirent
+              </div>
+            </div>
+            <button
+              onClick={() => setModeVideFrigo((p) => !p)}
+              style={{
+                padding: '5px 10px',
+                borderRadius: '12px',
+                fontSize: '11px',
+                fontWeight: 700,
+                border: `1px solid ${modeVideFrigo ? C.terra : C.border}`,
+                background: modeVideFrigo ? C.terra : 'transparent',
+                color: modeVideFrigo ? '#fff' : C.textLight,
+                cursor: 'pointer',
+              }}
+            >
+              {modeVideFrigo ? 'ON' : 'OFF'}
+            </button>
+          </div>
+
+          {/* Budget semaine */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '8px 10px',
+              borderRadius: '10px',
+              background: weeklyBudget ? `${C.green}10` : C.bgInset,
+              border: `1px solid ${weeklyBudget ? C.green : C.border}`,
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color: weeklyBudget ? C.green : C.textMid,
+                }}
+              >
+                💶 Budget semaine
+              </div>
+              <div style={{ fontSize: '10px', color: C.textLight }}>L'IA optimise les recettes</div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <input
+                type='number'
+                placeholder='80'
+                value={weeklyBudget}
+                onChange={(e) => setWeeklyBudget(e.target.value)}
+                style={{
+                  width: '52px',
+                  padding: '5px 6px',
+                  borderRadius: '8px',
+                  border: `1px solid ${C.border}`,
+                  background: C.bgCard,
+                  color: C.text,
+                  fontSize: '12px',
+                  fontFamily: "'Lato',sans-serif",
+                  textAlign: 'center',
+                }}
+              />
+              <span style={{ fontSize: '11px', color: C.textLight }}>€</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Saison */}
+        <div
+          style={{
+            marginTop: '10px',
+            padding: '6px 10px',
+            borderRadius: '8px',
+            background: `${C.green}08`,
+            border: `1px solid ${C.green}25`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+          }}
+        >
+          <span style={{ fontSize: '11px', color: C.green, fontWeight: 600 }}>
+            🌱 {getSeason().label} — {getSeason().hint}
+          </span>
         </div>
       </Card>
 
@@ -2315,6 +3193,10 @@ Réponds UNIQUEMENT en JSON valide :
                   <span style={st.badge(C.green)}>👤 {recipe.portions} pers.</span>
                   {recipe.difficulte && (
                     <span style={st.badge(C.brownLight)}>{recipe.difficulte}</span>
+                  )}
+                  {recipe.de_saison && <span style={st.badge(C.green)}>🌱 De saison</span>}
+                  {recipe.budget_estime && (
+                    <span style={st.badge(C.brownMid)}>💶 {recipe.budget_estime}</span>
                   )}
                   {recipe.conservation_label && (
                     <span style={st.badge(C.terra)}>📦 {recipe.conservation_label}</span>
@@ -2611,8 +3493,15 @@ Réponds UNIQUEMENT en JSON valide :
                       justifyContent: 'flex-end',
                     }}
                   >
-                    <Btn variant='outline' small onClick={() => openCookFeedback(recipe)}>
-                      👨‍🍳 Mon retour
+                    <Btn
+                      variant='outline'
+                      small
+                      onClick={() => {
+                        addToHistory(recipe.nom)
+                        openCookFeedback(recipe)
+                      }}
+                    >
+                      👨‍🍳 J'ai cuisiné ça
                     </Btn>
                     <Btn variant='outline' small onClick={() => openAdapt(recipe)}>
                       🔧 Adapter
@@ -2631,260 +3520,369 @@ Réponds UNIQUEMENT en JSON valide :
 
   // ── Shopping Tab ───────────────────────────────────────────────
   const renderCourses = () => {
-    const current = activeList != null ? shoppingLists.find((l) => l.id == activeList) : null
-    console.log('activeList:', activeList, typeof activeList)
-    console.log(
-      'lists:',
-      shoppingLists.map((l) => ({ id: l.id, type: typeof l.id }))
-    )
+    const activeLists = JSON.parse(sessionStorage.getItem('lgm_active_lists') || '[]')
+    const setActiveLists = (v) =>
+      sessionStorage.setItem(
+        'lgm_active_lists',
+        JSON.stringify(typeof v === 'function' ? v(activeLists) : v)
+      )
+
+    // Consolide recettes + panier manuel
+    const consolidatedItems = {}
+
+    // Items des listes recettes sélectionnées
+    shoppingLists
+      .filter((l) => activeLists.includes(l.id))
+      .forEach((list) => {
+        list.categories?.forEach((cat) => {
+          cat.items.forEach((item) => {
+            const key = item.nom.toLowerCase().trim()
+            if (!consolidatedItems[key])
+              consolidatedItems[key] = { nom: item.nom, quantites: [], source: 'liste' }
+            consolidatedItems[key].quantites.push({
+              quantite: item.quantite,
+              listTitre: list.titre,
+            })
+          })
+        })
+      })
+
+    // Items du panier manuel — toujours présents
+    manualCart.forEach((item) => {
+      const key = item.nom.toLowerCase().trim()
+      if (!consolidatedItems[key])
+        consolidatedItems[key] = { nom: item.nom, quantites: [], source: 'manuel' }
+      consolidatedItems[key].quantites.push({
+        quantite: `${item.quantity} ${item.unit}`,
+        listTitre: 'Panier',
+      })
+    })
+
+    const consolidatedList = Object.values(consolidatedItems)
+    const checkedKey = 'lgm_checked_consolidated'
+    const checkedItems = JSON.parse(sessionStorage.getItem(checkedKey) || '{}')
+    const toggleChecked = (key) => {
+      const updated = { ...checkedItems, [key]: !checkedItems[key] }
+      sessionStorage.setItem(checkedKey, JSON.stringify(updated))
+      setShoppingLists((p) => [...p]) // force re-render
+    }
+
+    const totalItems = consolidatedList.length
+    const doneItems = consolidatedList.filter(
+      (i) => checkedItems[i.nom.toLowerCase().trim()]
+    ).length
+
     return (
       <div style={st.content}>
-        {!current ? (
-          <>
+        {/* Header */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '10px',
+          }}
+        >
+          <SectionLabel>Mes courses</SectionLabel>
+          <Btn variant='outline' small onClick={() => setShowAddList(!showAddList)}>
+            {showAddList ? '✕' : '+ Nouvelle liste IA'}
+          </Btn>
+        </div>
+
+        {showAddList && (
+          <Card accent style={{ marginBottom: '12px' }}>
+            <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '8px' }}>
+              L'IA génère une liste depuis ton objectif
+            </div>
+            <div style={{ marginBottom: '10px' }}>
+              <Input
+                multiline
+                placeholder='Ex : 5 déjeuners pour la semaine, budget 20€...'
+                value={shoppingGoal}
+                onChange={setShoppingGoal}
+              />
+            </div>
+            <Btn onClick={generateShoppingList} disabled={!shoppingGoal.trim() || shoppingLoading}>
+              {shoppingLoading ? '⏳ Génération...' : '✨ Générer la liste'}
+            </Btn>
+          </Card>
+        )}
+
+        {/* Boutons recettes */}
+        {shoppingLists.length > 0 && (
+          <div style={{ marginBottom: '14px' }}>
             <div
               style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '10px',
+                fontSize: '10px',
+                fontWeight: 700,
+                color: C.textLight,
+                textTransform: 'uppercase',
+                letterSpacing: '0.8px',
+                marginBottom: '8px',
               }}
             >
-              <SectionLabel>Mes listes ({shoppingLists.length})</SectionLabel>
-              <Btn variant='outline' small onClick={() => setShowAddList(!showAddList)}>
-                {showAddList ? '✕' : '+ Nouvelle'}
-              </Btn>
+              Recettes à combiner
             </div>
-
-            {showAddList && (
-              <Card accent style={{ marginBottom: '12px' }}>
-                <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '8px' }}>
-                  Décris ton objectif, l'IA génère la liste optimisée
-                </div>
-                <div style={{ marginBottom: '10px' }}>
-                  <Input
-                    multiline
-                    placeholder='Ex : 5 déjeuners pour la semaine, budget 20€, recettes simples à réchauffer le midi...'
-                    value={shoppingGoal}
-                    onChange={setShoppingGoal}
-                  />
-                </div>
-                <Btn
-                  onClick={generateShoppingList}
-                  disabled={!shoppingGoal.trim() || shoppingLoading}
-                >
-                  {shoppingLoading ? '⏳ Génération...' : '✨ Générer la liste'}
-                </Btn>
-              </Card>
-            )}
-
-            {shoppingLists.length === 0 ? (
-              <Card>
-                <div style={{ textAlign: 'center', color: C.textLight, padding: '28px 0' }}>
-                  <div style={{ fontSize: '30px', marginBottom: '8px' }}>📋</div>Crée ta première
-                  liste avec un objectif
-                </div>
-              </Card>
-            ) : (
-              shoppingLists.map((list) => {
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {shoppingLists.map((list) => {
                 const total = list.categories?.reduce((a, c) => a + c.items.length, 0) || 0
-                const checked = Object.values(list.checked || {}).filter(Boolean).length
+                const isActive = activeLists.includes(list.id)
                 return (
-                  <div
+                  <button
                     key={list.id}
-                    style={{
-                      background: C.bgCard,
-                      borderRadius: '16px',
-                      padding: '14px',
-                      marginBottom: '11px',
-                      border: `1.5px solid ${C.border}`,
-                      cursor: 'pointer',
-                    }}
                     onClick={() => {
-                      console.log('clicked', list.id)
-                      setActiveList(list.id)
+                      setActiveLists(
+                        isActive
+                          ? activeLists.filter((id) => id !== list.id)
+                          : [...activeLists, list.id]
+                      )
+                      sessionStorage.removeItem(checkedKey)
+                      setShoppingLists((p) => [...p])
+                    }}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      padding: '8px 12px',
+                      borderRadius: '14px',
+                      border: isActive ? `2px solid ${C.brown}` : `1px solid ${C.border}`,
+                      background: isActive ? `${C.brown}15` : C.bgInset,
+                      cursor: 'pointer',
+                      fontFamily: "'Lato',sans-serif",
+                      minWidth: '80px',
                     }}
                   >
-                    <div
+                    <span
                       style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        color: isActive ? C.brown : C.textMid,
+                        maxWidth: '90px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
                       }}
                     >
-                      <div>
-                        <div
-                          style={{
-                            fontWeight: 700,
-                            fontSize: '14px',
-                            fontFamily: "'Playfair Display',serif",
-                            color: C.brown,
-                          }}
-                        >
-                          {list.titre || list.goal}
-                        </div>
-                        <div style={{ fontSize: '12px', color: C.textMid, marginTop: '2px' }}>
-                          {list.repas_couverts}
-                        </div>
-                      </div>
-                      <Pill label={list.budget_estime} color={C.green} />
-                    </div>
-                    <div
+                      {list.titre || list.goal}
+                    </span>
+                    <span
                       style={{
-                        marginTop: '10px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
+                        fontSize: '11px',
+                        color: isActive ? C.terra : C.textLight,
+                        marginTop: '2px',
                       }}
                     >
-                      <div
-                        style={{
-                          flex: 1,
-                          height: '4px',
-                          borderRadius: '2px',
-                          background: C.border,
-                        }}
-                      >
-                        <div
-                          style={{
-                            height: '100%',
-                            borderRadius: '2px',
-                            background: C.green,
-                            width: total > 0 ? `${(checked / total) * 100}%` : '0%',
-                            transition: 'width 0.3s',
-                          }}
-                        />
-                      </div>
-                      <span style={{ fontSize: '11px', color: C.textLight }}>
-                        {checked}/{total}
-                      </span>
-                    </div>
-                  </div>
+                      {Object.values(list.checked || {}).filter(Boolean).length}/{total}
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setShoppingLists((p) => p.filter((l) => l.id !== list.id))
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: C.textLight,
+                        fontSize: '10px',
+                        cursor: 'pointer',
+                        marginTop: '2px',
+                      }}
+                    >
+                      🗑
+                    </button>
+                  </button>
                 )
-              })
-            )}
-          </>
-        ) : (
-          <>
-            <div
-              style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}
-            >
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Panier manuel — ajout rapide */}
+        <Card>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '10px',
+            }}
+          >
+            <SectionLabel>🧺 Panier perso ({manualCart.length})</SectionLabel>
+            {manualCart.length > 0 && (
               <button
-                onClick={() => setActiveList(null)}
+                onClick={() => setManualCart([])}
                 style={{
                   background: 'none',
                   border: 'none',
-                  color: C.brown,
+                  color: C.textLight,
+                  fontSize: '11px',
                   cursor: 'pointer',
-                  fontSize: '22px',
-                  padding: '0',
                 }}
               >
-                ←
+                Vider
               </button>
-              <div>
+            )}
+          </div>
+
+          {/* Formulaire ajout rapide */}
+          <ManualCartAdd
+            onAdd={(item) => setManualCart((p) => [...p, { ...item, id: Date.now() }])}
+          />
+
+          {/* Items du panier */}
+          {manualCart.length > 0 && (
+            <div style={{ marginTop: '10px' }}>
+              {manualCart.map((item, i) => (
                 <div
+                  key={item.id}
                   style={{
-                    fontWeight: 700,
-                    fontSize: '16px',
-                    fontFamily: "'Playfair Display',serif",
-                    color: C.brown,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 0',
+                    borderBottom: i < manualCart.length - 1 ? `1px solid ${C.border}` : 'none',
                   }}
                 >
-                  {current.titre}
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontWeight: 600, fontSize: '13px', color: C.text }}>
+                      {item.nom}
+                    </span>
+                    <span style={{ fontSize: '12px', color: C.terra, marginLeft: '8px' }}>
+                      {item.quantity} {item.unit}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setManualCart((p) => p.filter((x) => x.id !== item.id))}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: C.border,
+                      cursor: 'pointer',
+                      fontSize: '16px',
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
-                <div style={{ fontSize: '12px', color: C.textMid }}>
-                  {current.budget_estime} · {current.repas_couverts}
-                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        {/* Vue consolidée */}
+        {consolidatedList.length > 0 && (
+          <Card>
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}
+            >
+              <SectionLabel style={{ marginBottom: 0 }}>📋 Liste consolidée</SectionLabel>
+              <div style={{ flex: 1, height: '5px', borderRadius: '3px', background: C.border }}>
+                <div
+                  style={{
+                    height: '100%',
+                    borderRadius: '3px',
+                    background: C.green,
+                    width: totalItems > 0 ? `${(doneItems / totalItems) * 100}%` : '0%',
+                    transition: 'width 0.3s',
+                  }}
+                />
               </div>
+              <span
+                style={{ fontSize: '11px', fontWeight: 700, color: C.green, whiteSpace: 'nowrap' }}
+              >
+                {doneItems}/{totalItems}
+              </span>
             </div>
 
-            {current.categories?.map((cat) => (
-              <Card key={cat.nom}>
-                <SectionLabel>{cat.nom}</SectionLabel>
-                {cat.items.map((item) => {
-                  const k = `${cat.nom}-${item.nom}`,
-                    done = current.checked?.[k]
-                  return (
-                    <div
-                      key={item.nom}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        padding: '8px 0',
-                        borderBottom: `1px solid ${C.border}`,
-                        cursor: 'pointer',
-                        opacity: done ? 0.5 : 1,
-                      }}
-                      onClick={() => toggleItem(current.id, cat.nom, item.nom)}
-                    >
-                      <div
-                        style={{
-                          width: '20px',
-                          height: '20px',
-                          borderRadius: '6px',
-                          border: `2px solid ${done ? C.green : C.border}`,
-                          background: done ? C.green : 'transparent',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          flexShrink: 0,
-                        }}
-                      >
-                        {done && <span style={{ color: '#fff', fontSize: '12px' }}>✓</span>}
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <span
-                          style={{
-                            fontWeight: 600,
-                            fontSize: '14px',
-                            color: C.text,
-                            textDecoration: done ? 'line-through' : 'none',
-                          }}
-                        >
-                          {item.nom}
-                        </span>
-                        <span style={{ fontSize: '12px', color: C.textLight, marginLeft: '8px' }}>
-                          {item.quantite}
-                        </span>
-                        {item.conseil && (
-                          <div style={{ fontSize: '11px', color: C.textLight, marginTop: '2px' }}>
-                            {item.conseil}
-                          </div>
-                        )}
-                      </div>
-                      {item.prix_estime && (
-                        <span style={{ fontSize: '12px', color: C.textMid }}>
-                          {item.prix_estime}
-                        </span>
-                      )}
-                    </div>
-                  )
-                })}
-              </Card>
-            ))}
-
-            {current.conseils?.length > 0 && (
-              <Card style={{ background: `${C.green}08`, border: `1px solid ${C.green}25` }}>
-                <SectionLabel>💡 Conseils batch</SectionLabel>
-                {current.conseils.map((c, i) => (
-                  <div key={i} style={{ fontSize: '13px', color: C.text, marginBottom: '5px' }}>
-                    • {c}
+            {consolidatedList.map((item, i) => {
+              const key = item.nom.toLowerCase().trim()
+              const done = checkedItems[key]
+              const qtDisplay = item.quantites.map((q) => q.quantite).join(' + ')
+              return (
+                <div
+                  key={key}
+                  onClick={() => toggleChecked(key)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '9px 0',
+                    borderBottom:
+                      i < consolidatedList.length - 1 ? `1px solid ${C.border}` : 'none',
+                    cursor: 'pointer',
+                    opacity: done ? 0.45 : 1,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: '22px',
+                      height: '22px',
+                      borderRadius: '6px',
+                      border: `2px solid ${done ? C.green : C.border}`,
+                      background: done ? C.green : 'transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {done && <span style={{ color: '#fff', fontSize: '12px' }}>✓</span>}
                   </div>
-                ))}
-              </Card>
-            )}
+                  <div style={{ flex: 1 }}>
+                    <span
+                      style={{
+                        fontWeight: 600,
+                        fontSize: '14px',
+                        color: C.text,
+                        textDecoration: done ? 'line-through' : 'none',
+                      }}
+                    >
+                      {item.nom}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: '12px',
+                        color: C.terra,
+                        marginLeft: '8px',
+                        fontWeight: 700,
+                      }}
+                    >
+                      {qtDisplay}
+                    </span>
+                    {item.quantites.length > 1 && (
+                      <div
+                        style={{ display: 'flex', gap: '4px', marginTop: '3px', flexWrap: 'wrap' }}
+                      >
+                        {item.quantites.map((q, qi) => (
+                          <span
+                            key={qi}
+                            style={{
+                              fontSize: '9px',
+                              padding: '1px 5px',
+                              borderRadius: '6px',
+                              background: `${C.brown}15`,
+                              color: C.brownMid,
+                            }}
+                          >
+                            {q.listTitre} : {q.quantite}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </Card>
+        )}
 
-            <Btn
-              variant='danger'
-              onClick={() => {
-                setShoppingLists((p) => p.filter((l) => l.id !== current.id))
-                setActiveList(null)
-              }}
-            >
-              🗑 Supprimer cette liste
-            </Btn>
-          </>
+        {consolidatedList.length === 0 && shoppingLists.length === 0 && manualCart.length === 0 && (
+          <Card>
+            <div style={{ textAlign: 'center', color: C.textLight, padding: '28px 0' }}>
+              <div style={{ fontSize: '30px', marginBottom: '8px' }}>🛒</div>
+              Ajoute des articles dans le panier ou crée une liste IA
+            </div>
+          </Card>
         )}
       </div>
     )
