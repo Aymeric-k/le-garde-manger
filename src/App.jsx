@@ -231,12 +231,7 @@ export default function App() {
     if (!file) return;
     setScanLoading(true); setScanResult(null); setScanConfirm(null); setShowScanPanel(true);
     try {
-      const base64 = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result.split(",")[1]);
-        r.onerror = () => rej();
-        r.readAsDataURL(file);
-      });
+      const base64 = await compressImage(file);
       const prompt = `Tu analyses un ticket de caisse français. Extrais tous les articles et classe-les.
 
 Réponds UNIQUEMENT en JSON valide :
@@ -260,10 +255,11 @@ Règles :
 - Si tu ne vois pas clairement un champ, mets null
 - Ignore les articles non-produits (sacs, services, remises globales)`;
 
-      const res = await fetch("/api-proxy.php", {
-        method:"POST", headers:{"Content-Type":"application/json", "x-proxy-token": import.meta.env.VITE_PROXY_TOKEN},
+      const res = await fetch("/gardemanger/api-proxy.php", {
+        method:"POST", headers:{"Content-Type":"application/json", "x-proxy-token": "lgm_2024_xK9mP3"},
         body: JSON.stringify({
-          model:"claude-sonnet-4-5", max_tokens:1000,
+          proxy_token: "lgm_2024_xK9mP3",
+          model:"claude-sonnet-4-5", max_tokens:4000,
           messages:[{ role:"user", content:[
             { type:"image", source:{ type:"base64", media_type:file.type||"image/jpeg", data:base64 }},
             { type:"text", text:prompt }
@@ -302,7 +298,23 @@ Règles :
     });
     setShowScanPanel(false); setScanConfirm(null); setScanResult(null);
   };
-
+  const compressImage = (file, maxWidth = 1200) => new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ratio = Math.min(maxWidth / img.width, maxWidth / img.height, 1);
+        canvas.width = img.width * ratio;
+        canvas.height = img.height * ratio;
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        const compressed = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+        resolve(compressed);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
   // ── Recipe photo analysis
   const [showRecipeAnalysis, setShowRecipeAnalysis] = useState(false);
   const [recipeAnalysisLoading, setRecipeAnalysisLoading] = useState(false);
@@ -312,12 +324,7 @@ Règles :
     if (!file) return;
     setRecipeAnalysisLoading(true); setRecipeAnalysisResult(null); setShowRecipeAnalysis(true);
     try {
-      const base64 = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result.split(",")[1]);
-        r.onerror = () => rej();
-        r.readAsDataURL(file);
-      });
+      const base64 = await compressImage(file);
 
       const inventaire = ingredients.map(i=>`${i.name} (${i.quantity}${i.unit})`).join(", ") || "Inventaire vide";
 
@@ -362,10 +369,11 @@ Réponds UNIQUEMENT en JSON valide :
 
 Statuts possibles : "disponible", "substituable", "manquant"`;
 
-      const res = await fetch("/api-proxy.php", {
-        method:"POST", headers:{"Content-Type":"application/json", "x-proxy-token": import.meta.env.VITE_PROXY_TOKEN},
+      const res = await fetch("/gardemanger/api-proxy.php", {
+        method:"POST", headers:{"Content-Type":"application/json", "x-proxy-token": "lgm_2024_xK9mP3"},
         body: JSON.stringify({
-          model:"claude-sonnet-4-5", max_tokens:1000,
+          proxy_token: "lgm_2024_xK9mP3",
+          model:"claude-sonnet-4-5", max_tokens:4000,
           messages:[{ role:"user", content:[
             { type:"image", source:{ type:"base64", media_type:file.type||"image/jpeg", data:base64 }},
             { type:"text", text:prompt }
@@ -483,13 +491,13 @@ Génère exactement 3 recettes. Réponds UNIQUEMENT en JSON valide :
 }`;
 
     try {
-      const res  = await fetch("/api-proxy.php", {
-        method:"POST", headers:{"Content-Type":"application/json", "x-proxy-token": import.meta.env.VITE_PROXY_TOKEN}, body:JSON.stringify({ model:"claude-sonnet-4-5", max_tokens:1000, messages:[{role:"user",content:prompt}] }) });
+      const res  = await fetch("/gardemanger/api-proxy.php", {
+        method:"POST", headers:{"Content-Type":"application/json", "x-proxy-token": "lgm_2024_xK9mP3"}, body:JSON.stringify({ proxy_token: "lgm_2024_xK9mP3", model:"claude-sonnet-4-5", max_tokens:4000, messages:[{role:"user",content:prompt}] }) });
       const data = await res.json();
       const text = data.content?.map(b=>b.text||"").join("")||"";
       const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
       setRecipeResult(parsed.recettes||[]);
-    } catch {
+    } catch(e) {
       setRecipeResult([{ id:"err", nom:"Erreur", emoji:"❌", description:`Erreur: ${e?.message||JSON.stringify(e)||"inconnue"}`, etapes:[] }]);
     }
     setRecipeLoading(false);
@@ -523,8 +531,8 @@ Propose une adaptation immédiate, simple, en gardant le même esprit de plat. R
   "conseil": "Un conseil de chef pour réussir malgré tout"
 }`;
     try {
-      const res  = await fetch("/api-proxy.php", {
-        method:"POST", headers:{"Content-Type":"application/json", "x-proxy-token": import.meta.env.VITE_PROXY_TOKEN}, body:JSON.stringify({ model:"claude-sonnet-4-5", max_tokens:1000, messages:[{role:"user",content:prompt}] }) });
+      const res  = await fetch("/gardemanger/api-proxy.php", {
+        method:"POST", headers:{"Content-Type":"application/json", "x-proxy-token": "lgm_2024_xK9mP3"}, body:JSON.stringify({ proxy_token: "lgm_2024_xK9mP3", model:"claude-sonnet-4-5", max_tokens:4000, messages:[{role:"user",content:prompt}] }) });
       const data = await res.json();
       const text = data.content?.map(b=>b.text||"").join("")||"";
       const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
@@ -608,8 +616,8 @@ Réponds UNIQUEMENT en JSON valide :
   "conseils": ["Conseil 1"]
 }`;
     try {
-      const res  = await fetch("/api-proxy.php", {
-        method:"POST", headers:{"Content-Type":"application/json", "x-proxy-token": import.meta.env.VITE_PROXY_TOKEN}, body:JSON.stringify({ model:"claude-sonnet-4-5", max_tokens:1000, messages:[{role:"user",content:prompt}] }) });
+      const res  = await fetch("/gardemanger/api-proxy.php", {
+        method:"POST", headers:{"Content-Type":"application/json", "x-proxy-token": "lgm_2024_xK9mP3"}, body:JSON.stringify({ proxy_token: "lgm_2024_xK9mP3", model:"claude-sonnet-4-5", max_tokens:1000, messages:[{role:"user",content:prompt}] }) });
       const data = await res.json();
       const text = data.content?.map(b=>b.text||"").join("")||"";
       const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
