@@ -1689,10 +1689,18 @@ Réponds UNIQUEMENT en JSON valide :
               }}
             >
               <SectionLabel>Mes ingrédients ({ingredients.length})</SectionLabel>
-              <Btn variant='outline' small onClick={() => setShowAddIng(!showAddIng)}>
+              <Btn
+                variant='outline'
+                small
+                onClick={() => {
+                  setShowAddIng(!showAddIng)
+                  setLastTicketItems([])
+                  setPhotoCount(0)
+                }}
+              >
                 {showAddIng ? '✕ Annuler' : '+ Ajouter'}
-                setLastTicketItems([]) setPhotoCount(0)
               </Btn>
+
             </div>
 
             {showAddIng && (
