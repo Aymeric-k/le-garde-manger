@@ -513,8 +513,8 @@ export default function App() {
   const [currentBarcodeTarget, setCurrentBarcodeTarget] = useState(null)
   const [scanConfirm, setScanConfirm] = useState(null)
   const [fridgeSubTab, setFridgeSubTab] = useState('food')
-  const [lastTicketItems, setLastTicketItems] = useState([]); // 3 derniers articles
-  const [photoCount, setPhotoCount] = useState(0);
+  const [lastTicketItems, setLastTicketItems] = useState([]) // 3 derniers articles
+  const [photoCount, setPhotoCount] = useState(0)
 
   // Adapt panel state
   const [adaptTarget, setAdaptTarget] = useState(null)
@@ -616,12 +616,13 @@ export default function App() {
 
     try {
       const base64 = await compressImage(file)
-      const continuityContext = lastTicketItems.length > 0
-      ? `\nCONTINUATION : Cette photo fait suite à une précédente.
+      const continuityContext =
+        lastTicketItems.length > 0
+          ? `\nCONTINUATION : Cette photo fait suite à une précédente.
          Les derniers articles de la photo précédente étaient :
-         ${lastTicketItems.map(i => i.texte_brut).join(", ")}.
+         ${lastTicketItems.map((i) => i.texte_brut).join(', ')}.
          Ne les répète PAS — commence à partir des articles qui suivent.`
-      : ""
+          : ''
       const prompt = `Tu es un OCR spécialisé tickets de caisse français.
 
   Extrais TOUTES les lignes de produits. RÈGLES STRICTES :
@@ -714,7 +715,7 @@ export default function App() {
       setScanPhases({ haute, moyenne, basse })
       const derniersArticles = parsed.lignes?.slice(-3) || []
       setLastTicketItems(derniersArticles)
-      setPhotoCount(p => p + 1)
+      setPhotoCount((p) => p + 1)
       setOffLoading(false)
     } catch (e) {
       setScanResult({ error: true })
@@ -1678,8 +1679,7 @@ Réponds UNIQUEMENT en JSON valide :
               <SectionLabel>Mes ingrédients ({ingredients.length})</SectionLabel>
               <Btn variant='outline' small onClick={() => setShowAddIng(!showAddIng)}>
                 {showAddIng ? '✕ Annuler' : '+ Ajouter'}
-                setLastTicketItems([])
-setPhotoCount(0)
+                setLastTicketItems([]) setPhotoCount(0)
               </Btn>
             </div>
 
@@ -1917,135 +1917,342 @@ setPhotoCount(0)
               }}
             >
               {scanLoading ? (
-  <div style={{ textAlign: 'center', padding: '40px 0' }}>
-    <div style={{ fontSize: '32px', marginBottom: '12px' }}>🧾</div>
-    <div style={{ fontFamily: "'Playfair Display',serif", fontSize: '16px', color: C.brown, marginBottom: '6px' }}>
-      Lecture du ticket...
-    </div>
-    <div style={{ fontSize: '12px', color: C.textLight }}>Extraction en cours</div>
-  </div>
-) : scanResult?.error ? (
-  <div style={{ textAlign: 'center', padding: '32px 0' }}>
-    <div style={{ fontSize: '30px', marginBottom: '8px' }}>❌</div>
-    <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
-      Impossible de lire ce ticket.
-    </div>
-    <Btn variant='outline' onClick={() => setShowScanPanel(false)}>Fermer</Btn>
-  </div>
-) : (
-  <>
-    <div style={{ fontFamily: "'Playfair Display',serif", fontSize: '18px', fontWeight: 700, color: C.brown, marginBottom: '4px' }}>
-      🧾 {scanResult?.enseigne} — {scanResult?.lieu}
-    </div>
-    <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '14px' }}>{scanResult?.date}</div>
+                <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                  <div style={{ fontSize: '32px', marginBottom: '12px' }}>🧾</div>
+                  <div
+                    style={{
+                      fontFamily: "'Playfair Display',serif",
+                      fontSize: '16px',
+                      color: C.brown,
+                      marginBottom: '6px',
+                    }}
+                  >
+                    Lecture du ticket...
+                  </div>
+                  <div style={{ fontSize: '12px', color: C.textLight }}>Extraction en cours</div>
+                </div>
+              ) : scanResult?.error ? (
+                <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                  <div style={{ fontSize: '30px', marginBottom: '8px' }}>❌</div>
+                  <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
+                    Impossible de lire ce ticket.
+                  </div>
+                  <Btn variant='outline' onClick={() => setShowScanPanel(false)}>
+                    Fermer
+                  </Btn>
+                </div>
+              ) : (
+                <>
+                  <div
+                    style={{
+                      fontFamily: "'Playfair Display',serif",
+                      fontSize: '18px',
+                      fontWeight: 700,
+                      color: C.brown,
+                      marginBottom: '4px',
+                    }}
+                  >
+                    🧾 {scanResult?.enseigne} — {scanResult?.lieu}
+                  </div>
+                  <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '14px' }}>
+                    {scanResult?.date}
+                  </div>
 
-    {offLoading && (
-      <div style={{ padding: '10px 12px', background: `${C.green}10`, borderRadius: '10px', marginBottom: '14px', fontSize: '12px', color: C.green }}>
-        🔍 Recherche Open Food Facts en cours...
-      </div>
-    )}
+                  {offLoading && (
+                    <div
+                      style={{
+                        padding: '10px 12px',
+                        background: `${C.green}10`,
+                        borderRadius: '10px',
+                        marginBottom: '14px',
+                        fontSize: '12px',
+                        color: C.green,
+                      }}
+                    >
+                      🔍 Recherche Open Food Facts en cours...
+                    </div>
+                  )}
 
-    {/* Stats */}
-    {!offLoading && (
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-        {[
-          { label: '✅ Reconnus', count: scanPhases.haute.length, color: C.green },
-          { label: '🔍 À confirmer', count: scanPhases.moyenne.length, color: '#d4a017' },
-          { label: '❓ Inconnus', count: scanPhases.basse.length, color: C.terra },
-        ].map(s => (
-          <div key={s.label} style={{ flex: 1, textAlign: 'center', padding: '8px 4px', borderRadius: '10px', background: s.color + '15', border: `1px solid ${s.color}30` }}>
-            <div style={{ fontSize: '18px', fontWeight: 800, color: s.color }}>{s.count}</div>
-            <div style={{ fontSize: '9px', color: s.color, fontWeight: 600 }}>{s.label}</div>
+                  {/* Stats */}
+                  {!offLoading && (
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                      {[
+                        { label: '✅ Reconnus', count: scanPhases.haute.length, color: C.green },
+                        {
+                          label: '🔍 À confirmer',
+                          count: scanPhases.moyenne.length,
+                          color: '#d4a017',
+                        },
+                        { label: '❓ Inconnus', count: scanPhases.basse.length, color: C.terra },
+                      ].map((s) => (
+                        <div
+                          key={s.label}
+                          style={{
+                            flex: 1,
+                            textAlign: 'center',
+                            padding: '8px 4px',
+                            borderRadius: '10px',
+                            background: s.color + '15',
+                            border: `1px solid ${s.color}30`,
+                          }}
+                        >
+                          <div style={{ fontSize: '18px', fontWeight: 800, color: s.color }}>
+                            {s.count}
+                          </div>
+                          <div style={{ fontSize: '9px', color: s.color, fontWeight: 600 }}>
+                            {s.label}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* ✅ Haute confiance */}
+                  {scanPhases.haute.length > 0 && (
+                    <div style={{ marginBottom: '14px' }}>
+                      <SectionLabel>✅ Reconnus directement</SectionLabel>
+                      {scanPhases.haute.map((item, idx) => (
+                        <div
+                          key={idx}
+                          onClick={() =>
+                            setScanPhases((p) => ({
+                              ...p,
+                              haute: p.haute.map((x, i) =>
+                                i === idx ? { ...x, selected: !x.selected } : x
+                              ),
+                            }))
+                          }
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '7px 0',
+                            borderBottom: `1px solid ${C.border}`,
+                            cursor: 'pointer',
+                            opacity: item.selected ? 1 : 0.5,
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: '18px',
+                              height: '18px',
+                              borderRadius: '5px',
+                              border: `2px solid ${item.selected ? C.green : C.border}`,
+                              background: item.selected ? C.green : 'transparent',
+                              flexShrink: 0,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            {item.selected && (
+                              <span style={{ color: '#fff', fontSize: '11px' }}>✓</span>
+                            )}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <span style={{ fontWeight: 600, fontSize: '13px', color: C.text }}>
+                              {item.texte_brut}
+                            </span>
+                            <span
+                              style={{ fontSize: '11px', color: C.textLight, marginLeft: '8px' }}
+                            >
+                              {item.poids}
+                            </span>
+                          </div>
+                          {item.prix && (
+                            <span style={{ fontSize: '11px', color: C.green }}>{item.prix}€</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 🔍 Moyenne confiance — candidats OFF */}
+                  {scanPhases.moyenne.length > 0 && (
+                    <div style={{ marginBottom: '14px' }}>
+                      <SectionLabel>🔍 À confirmer</SectionLabel>
+                      {scanPhases.moyenne.map((item, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            marginBottom: '10px',
+                            padding: '10px',
+                            background: '#d4a01710',
+                            borderRadius: '12px',
+                            border: '1px solid #d4a01730',
+                          }}
+                        >
+                          <div
+                            style={{ fontSize: '11px', color: C.textLight, marginBottom: '6px' }}
+                          >
+                            Ticket :{' '}
+                            <span style={{ fontFamily: 'monospace' }}>{item.texte_brut}</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                            {item.candidats?.map((c, ci) => (
+                              <button
+                                key={ci}
+                                onClick={() =>
+                                  setScanPhases((p) => ({
+                                    ...p,
+                                    moyenne: p.moyenne.map((x, i) =>
+                                      i === idx
+                                        ? { ...x, selected_candidat: ci, selected: true }
+                                        : x
+                                    ),
+                                  }))
+                                }
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  padding: '6px 8px',
+                                  borderRadius: '10px',
+                                  border:
+                                    item.selected_candidat === ci
+                                      ? `2px solid ${C.green}`
+                                      : `1px solid ${C.border}`,
+                                  background:
+                                    item.selected_candidat === ci ? `${C.green}15` : C.bgInset,
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {c.image && (
+                                  <img
+                                    src={c.image}
+                                    style={{
+                                      width: '28px',
+                                      height: '28px',
+                                      objectFit: 'contain',
+                                      borderRadius: '4px',
+                                    }}
+                                  />
+                                )}
+                                <span style={{ fontSize: '11px', fontWeight: 600, color: C.text }}>
+                                  {c.nom} {c.poids}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* ❓ Basse confiance */}
+                  {scanPhases.basse.length > 0 && (
+                    <div style={{ marginBottom: '14px' }}>
+                      <SectionLabel>
+                        ❓ Non reconnus — à ignorer ou corriger manuellement
+                      </SectionLabel>
+                      {scanPhases.basse.map((item, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '7px 0',
+                            borderBottom: `1px solid ${C.border}`,
+                          }}
+                        >
+                          <div style={{ flex: 1 }}>
+                            <span
+                              style={{
+                                fontSize: '12px',
+                                fontFamily: 'monospace',
+                                color: C.textMid,
+                              }}
+                            >
+                              {item.texte_brut}
+                            </span>
+                            {item.prix && (
+                              <span style={{ fontSize: '11px', color: C.green, marginLeft: '8px' }}>
+                                {item.prix}€
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() =>
+                              setScanPhases((p) => ({
+                                ...p,
+                                basse: p.basse.filter((_, i) => i !== idx),
+                              }))
+                            }
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: C.border,
+                              cursor: 'pointer',
+                              fontSize: '16px',
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '18px' }}>
+                    <Btn variant='outline' onClick={() => setShowScanPanel(false)}>
+                      Annuler
+                    </Btn>
+                    <div style={{ flex: 1 }}>
+                      <Btn
+                        variant='green'
+                        onClick={() => {
+                          const today = new Date()
+                          // Import haute confiance sélectionnés
+                          ;[
+                            ...scanPhases.haute.filter((i) => i.selected),
+                            ...scanPhases.moyenne.filter((i) => i.selected),
+                          ].forEach((item) => {
+                            const nom =
+                              item.candidats?.[item.selected_candidat]?.nom || item.texte_brut
+                            if (item.type === 'alimentaire') {
+                              setIngredients((p) => [
+                                ...p,
+                                {
+                                  id: Date.now() + Math.random(),
+                                  name: nom,
+                                  quantity: '1',
+                                  unit: item.poids || 'pièce(s)',
+                                  category: 'Autre',
+                                  dlc: '',
+                                  storage: 'garde_manger',
+                                },
+                              ])
+                            } else {
+                              setNonFood((p) => [
+                                ...p,
+                                {
+                                  id: Date.now() + Math.random(),
+                                  name: nom,
+                                  quantity: '1',
+                                  unit: 'pièce(s)',
+                                  category: 'Autre maison',
+                                  prix: item.prix,
+                                },
+                              ])
+                            }
+                          })
+                          setShowScanPanel(false)
+                          setScanPhases({ haute: [], moyenne: [], basse: [] })
+                        }}
+                      >
+                        ✓ Importer (
+                        {scanPhases.haute.filter((i) => i.selected).length +
+                          scanPhases.moyenne.filter((i) => i.selected).length}
+                        )
+                      </Btn>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
-        ))}
-      </div>
-    )}
-
-    {/* ✅ Haute confiance */}
-    {scanPhases.haute.length > 0 && (
-      <div style={{ marginBottom: '14px' }}>
-        <SectionLabel>✅ Reconnus directement</SectionLabel>
-        {scanPhases.haute.map((item, idx) => (
-          <div key={idx} onClick={() => setScanPhases(p => ({ ...p, haute: p.haute.map((x, i) => i === idx ? { ...x, selected: !x.selected } : x) }))}
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 0', borderBottom: `1px solid ${C.border}`, cursor: 'pointer', opacity: item.selected ? 1 : 0.5 }}>
-            <div style={{ width: '18px', height: '18px', borderRadius: '5px', border: `2px solid ${item.selected ? C.green : C.border}`, background: item.selected ? C.green : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {item.selected && <span style={{ color: '#fff', fontSize: '11px' }}>✓</span>}
-            </div>
-            <div style={{ flex: 1 }}>
-              <span style={{ fontWeight: 600, fontSize: '13px', color: C.text }}>{item.texte_brut}</span>
-              <span style={{ fontSize: '11px', color: C.textLight, marginLeft: '8px' }}>{item.poids}</span>
-            </div>
-            {item.prix && <span style={{ fontSize: '11px', color: C.green }}>{item.prix}€</span>}
-          </div>
-        ))}
-      </div>
-    )}
-
-    {/* 🔍 Moyenne confiance — candidats OFF */}
-    {scanPhases.moyenne.length > 0 && (
-      <div style={{ marginBottom: '14px' }}>
-        <SectionLabel>🔍 À confirmer</SectionLabel>
-        {scanPhases.moyenne.map((item, idx) => (
-          <div key={idx} style={{ marginBottom: '10px', padding: '10px', background: '#d4a01710', borderRadius: '12px', border: '1px solid #d4a01730' }}>
-            <div style={{ fontSize: '11px', color: C.textLight, marginBottom: '6px' }}>
-              Ticket : <span style={{ fontFamily: 'monospace' }}>{item.texte_brut}</span>
-            </div>
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-              {item.candidats?.map((c, ci) => (
-                <button key={ci} onClick={() => setScanPhases(p => ({ ...p, moyenne: p.moyenne.map((x, i) => i === idx ? { ...x, selected_candidat: ci, selected: true } : x) }))}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 8px', borderRadius: '10px', border: item.selected_candidat === ci ? `2px solid ${C.green}` : `1px solid ${C.border}`, background: item.selected_candidat === ci ? `${C.green}15` : C.bgInset, cursor: 'pointer' }}>
-                  {c.image && <img src={c.image} style={{ width: '28px', height: '28px', objectFit: 'contain', borderRadius: '4px' }} />}
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: C.text }}>{c.nom} {c.poids}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    )}
-
-    {/* ❓ Basse confiance */}
-    {scanPhases.basse.length > 0 && (
-      <div style={{ marginBottom: '14px' }}>
-        <SectionLabel>❓ Non reconnus — à ignorer ou corriger manuellement</SectionLabel>
-        {scanPhases.basse.map((item, idx) => (
-          <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 0', borderBottom: `1px solid ${C.border}` }}>
-            <div style={{ flex: 1 }}>
-              <span style={{ fontSize: '12px', fontFamily: 'monospace', color: C.textMid }}>{item.texte_brut}</span>
-              {item.prix && <span style={{ fontSize: '11px', color: C.green, marginLeft: '8px' }}>{item.prix}€</span>}
-            </div>
-            <button onClick={() => setScanPhases(p => ({ ...p, basse: p.basse.filter((_, i) => i !== idx) }))}
-              style={{ background: 'none', border: 'none', color: C.border, cursor: 'pointer', fontSize: '16px' }}>×</button>
-          </div>
-        ))}
-      </div>
-    )}
-
-    <div style={{ display: 'flex', gap: '8px', marginTop: '18px' }}>
-      <Btn variant='outline' onClick={() => setShowScanPanel(false)}>Annuler</Btn>
-      <div style={{ flex: 1 }}>
-        <Btn variant='green' onClick={() => {
-          const today = new Date();
-          // Import haute confiance sélectionnés
-          [...scanPhases.haute.filter(i => i.selected), ...scanPhases.moyenne.filter(i => i.selected)].forEach(item => {
-            const nom = item.candidats?.[item.selected_candidat]?.nom || item.texte_brut;
-            if (item.type === 'alimentaire') {
-              setIngredients(p => [...p, { id: Date.now() + Math.random(), name: nom, quantity: '1', unit: item.poids || 'pièce(s)', category: 'Autre', dlc: '', storage: 'garde_manger' }]);
-            } else {
-              setNonFood(p => [...p, { id: Date.now() + Math.random(), name: nom, quantity: '1', unit: 'pièce(s)', category: 'Autre maison', prix: item.prix }]);
-            }
-          });
-          setShowScanPanel(false);
-          setScanPhases({ haute: [], moyenne: [], basse: [] });
-        }}>
-          ✓ Importer ({scanPhases.haute.filter(i => i.selected).length + scanPhases.moyenne.filter(i => i.selected).length})
-        </Btn>
-      </div>
-    </div>
-  </>
-)}
-
-        {/* Recipe analysis panel */}
+        )}
         {showRecipeAnalysis && (
           <div
             style={{
