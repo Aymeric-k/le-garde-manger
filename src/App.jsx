@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import TicketCamera from './components/TicketCamera'
+import { searchProduct, getProductByBarcode } from './services/openFoodFacts'
 
 // ─── Palette & Design Tokens ───────────────────────────────────────────────
 const C = {
@@ -498,11 +500,21 @@ export default function App() {
   const [manualCart, setManualCart] = useStorage(STORAGE_KEYS.manualCart, [])
 
   // Ticket scan state
+  const [showTicketCamera, setShowTicketCamera] = useState(false)
   const [showScanPanel, setShowScanPanel] = useState(false)
   const [scanLoading, setScanLoading] = useState(false)
-  const [scanResult, setScanResult] = useState(null)
+  const [scanPhases, setScanPhases] = useState({
+    haute: [], // import direct
+    moyenne: [], // candidats OFF proposés
+    basse: [], // scan code-barres requis
+    validated: [], // tous les articles confirmés
+  })
+  const [offLoading, setOffLoading] = useState(false) // Open Food Facts en cours
+  const [currentBarcodeTarget, setCurrentBarcodeTarget] = useState(null)
   const [scanConfirm, setScanConfirm] = useState(null)
   const [fridgeSubTab, setFridgeSubTab] = useState('food')
+  const [lastTicketItems, setLastTicketItems] = useState([]); // 3 derniers articles
+  const [photoCount, setPhotoCount] = useState(0);
 
   // Adapt panel state
   const [adaptTarget, setAdaptTarget] = useState(null)
@@ -599,38 +611,64 @@ export default function App() {
     setScanLoading(true)
     setScanResult(null)
     setScanConfirm(null)
+    setScanPhases({ haute: [], moyenne: [], basse: [] })
     setShowScanPanel(true)
+
     try {
       const base64 = await compressImage(file)
-      const prompt = `Tu analyses un ticket de caisse français. Extrais tous les articles et classe-les.
+      const continuityContext = lastTicketItems.length > 0
+      ? `\nCONTINUATION : Cette photo fait suite à une précédente.
+         Les derniers articles de la photo précédente étaient :
+         ${lastTicketItems.map(i => i.texte_brut).join(", ")}.
+         Ne les répète PAS — commence à partir des articles qui suivent.`
+      : ""
+      const prompt = `Tu es un OCR spécialisé tickets de caisse français.
 
-Réponds UNIQUEMENT en JSON valide :
-{
-  "enseigne": "Leclerc",
-  "lieu": "Briey",
-  "date": "2025-05-21",
-  "alimentaire": [
-    { "nom": "Courgettes", "quantite": 500, "unite": "g", "prix": 1.20, "categorie": "Légumes", "dlc_estimee_jours": 7, "stockage": "frigo_semaine" }
-  ],
-  "non_alimentaire": [
-    { "nom": "Liquide vaisselle", "quantite": 1, "unite": "flacon(s)", "prix": 2.50, "categorie": "Entretien" }
-  ]
-}
+  Extrais TOUTES les lignes de produits. RÈGLES STRICTES :
+  - Copie le texte du ticket le plus fidèlement possible, NE L'INTERPRÈTE PAS
+  - Garde les abréviations telles quelles (ex: "TH.ENT.LISTAO NAT" pas "Thon entier")
+  - Inclus le poids/volume si visible
+  - Inclus le prix
+  - Ignore : numéros de caisse, totaux, remises globales, TVA
+  ${continuityContext}
 
-Règles :
-- alimentaire = tout ce qui se mange ou se boit
-- non_alimentaire = hygiène, entretien, beauté, papeterie, etc.
-- dlc_estimee_jours : estime selon le type de produit (légumes frais ~5-7j, viande ~3j, conserves ~999, laitiers ~10-14j)
-- stockage : "frigo_jour","frigo_semaine","congelateur","garde_manger"
-- Si tu ne vois pas clairement un champ, mets null
-- Ignore les articles non-produits (sacs, services, remises globales)`
+  Réponds UNIQUEMENT en JSON valide :
+  {
+    "enseigne": "E.Leclerc",
+    "lieu": "Conflans",
+    "date": "2026-05-22",
+    "lignes": [
+      {
+        "texte_brut": "TRANIER,OLIV.VTES -25% SEL,160G",
+        "prix": 1.96,
+        "poids": "160g",
+        "section": "EPICERIE SALEE",
+        "type": "alimentaire",
+        "confiance": "haute"
+      },
+      {
+        "texte_brut": "ECO+,TH.ENT.LISTAO NAT,140G",
+        "prix": 1.32,
+        "poids": "140g",
+        "section": "EPICERIE SALEE",
+        "type": "alimentaire",
+        "confiance": "basse"
+      }
+    ]
+  }
+
+  Niveaux de confiance :
+  - "haute" : nom clair et complet, peu d'abréviations
+  - "moyenne" : quelques abréviations mais déchiffrable
+  - "basse" : fortement abrégé ou illisible
+  Type : "alimentaire" ou "non_alimentaire"`
 
       const res = await fetch('/gardemanger/api-proxy.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-proxy-token': 'lgm_2024_xK9mP3' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           proxy_token: 'lgm_2024_xK9mP3',
-          model: 'claude-sonnet-4-5',
+          model: 'gpt-4o-mini',
           max_tokens: 4000,
           messages: [
             {
@@ -649,24 +687,40 @@ Règles :
       const data = await res.json()
       const text = data.content?.map((b) => b.text || '').join('') || ''
       const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
-      // Prépare les items à confirmer
-      const foodItems = (parsed.alimentaire || []).map((i) => ({
-        ...i,
-        selected: true,
-        type: 'food',
-      }))
-      const nonFoodItems = (parsed.non_alimentaire || []).map((i) => ({
-        ...i,
-        selected: true,
-        type: 'nonfood',
-      }))
+
       setScanResult({ enseigne: parsed.enseigne, lieu: parsed.lieu, date: parsed.date })
-      setScanConfirm([...foodItems, ...nonFoodItems])
+      setScanLoading(false)
+
+      // Phase 2 — Open Food Facts pour moyenne et basse
+      setOffLoading(true)
+      const haute = [],
+        moyenne = [],
+        basse = []
+
+      for (const ligne of parsed.lignes || []) {
+        if (ligne.confiance === 'haute') {
+          haute.push({ ...ligne, selected: true, candidats: null, selected_candidat: 0 })
+        } else {
+          const candidats = await searchProduct(ligne.texte_brut)
+          const item = { ...ligne, selected: true, candidats, selected_candidat: 0 }
+          if (candidats?.length) {
+            moyenne.push(item)
+          } else {
+            basse.push(item)
+          }
+        }
+      }
+
+      setScanPhases({ haute, moyenne, basse })
+      const derniersArticles = parsed.lignes?.slice(-3) || []
+      setLastTicketItems(derniersArticles)
+      setPhotoCount(p => p + 1)
+      setOffLoading(false)
     } catch (e) {
-      setScanConfirm([])
       setScanResult({ error: true })
+      setScanLoading(false)
+      setOffLoading(false)
     }
-    setScanLoading(false)
   }
 
   const confirmScanImport = () => {
@@ -711,6 +765,8 @@ Règles :
     setShowScanPanel(false)
     setScanConfirm(null)
     setScanResult(null)
+    setLastTicketItems([])
+    setPhotoCount(0)
   }
   const compressImage = (file, maxWidth = 1200) =>
     new Promise((resolve) => {
@@ -1273,23 +1329,96 @@ Propose une adaptation immédiate, simple, en gardant le même esprit de plat. R
   const generateShoppingList = async () => {
     if (!shoppingGoal.trim()) return
     setShoppingLoading(true)
-    const eqList = equipment.map((e) => e.label).join(', ') || 'Basique'
-    const ingList = ingredients.map((i) => i.name).join(', ') || 'Aucun'
-    const prompt = `Tu es un assistant cuisine. Génère une liste de courses intelligente.
+    const season = getSeason()
+    const eqList =
+      equipment.map((e) => `${e.label}${e.model ? ` (${e.model})` : ''}`).join(', ') || 'Basique'
+
+    // Inventaire détaillé avec DLC
+    const ingList =
+      ingredients
+        .map((i) => {
+          const d = getDaysLeft(i.dlc)
+          return `${i.name} (${i.quantity}${i.unit}${d !== null && d <= 3 ? ' ⚠️expire bientôt' : ''})`
+        })
+        .join(', ') || 'Vide'
+
+    // Profils convives
+    const convivesInfo =
+      users.length > 0
+        ? users
+            .map((u) => {
+              const age = AGE_GROUPS.find((a) => a.id === u.age_group)?.label || 'Adulte'
+              const prefs = (u.preferences || [])
+                .map((p) => PREF_TAGS.find((t) => t.id === p)?.label)
+                .filter(Boolean)
+                .join(', ')
+              const restr = (u.restrictions || [])
+                .map((r) => RESTRICTION_TAGS.find((t) => t.id === r)?.label)
+                .filter(Boolean)
+                .join(', ')
+              return `${u.name} (${age}${prefs ? ' | aime: ' + prefs : ''}${restr ? ' | RESTRICTIONS: ' + restr : ''})`
+            })
+            .join('\n')
+        : 'Non renseignés'
+
+    // Historique repas récents
+    const historyInfo =
+      mealHistory.length > 0
+        ? mealHistory
+            .slice(0, 7)
+            .map((m) => m.name)
+            .join(', ')
+        : 'Aucun'
+
+    const prompt = `Tu es un chef cuisinier et assistant courses intelligent. Génère une liste de courses PERSONNALISÉE et INTELLIGENTE.
 
 OBJECTIF : ${shoppingGoal}
-ÉQUIPEMENT : ${eqList}
-DÉJÀ EN STOCK : ${ingList}
+
+ÉQUIPEMENT DISPONIBLE : ${eqList}
+
+DÉJÀ EN STOCK (ne pas racheter sauf si insuffisant) :
+${ingList}
+
+PROFILS DES CONVIVES :
+${convivesInfo}
+
+REPAS DES 7 DERNIERS JOURS (évite les répétitions) :
+${historyInfo}
+
+SAISON ACTUELLE : ${season.label} — privilégie : ${season.hint}
+
+RÈGLES IMPORTANTES :
+- Ne liste PAS ce qui est déjà en stock en quantité suffisante
+- Adapte les quantités aux profils (enfant de 3 ans = petites portions, pas d'épices fortes)
+- Tiens compte des restrictions alimentaires de chaque convive
+- Propose des ingrédients polyvalents qui servent plusieurs repas
+- Inclus des produits de base qui manquent (huile, sel, etc.) si pas en stock
+- Favorise les légumes et fruits de saison
+- Si objectif économique : privilégie les protéines économiques (œufs, légumineuses, poulet)
 
 Réponds UNIQUEMENT en JSON valide :
 {
-  "titre": "Titre court",
-  "budget_estime": "15-25€",
-  "repas_couverts": "5 déjeuners",
+  "titre": "Courses semaine du [date]",
+  "budget_estime": "45-55€",
+  "repas_couverts": "7 dîners + 5 midis",
   "categories": [
-    { "nom": "Légumes", "items": [{ "nom": "Courgettes", "quantite": "3", "conseil": "Choisir fermes", "prix_estime": "1.50€" }] }
+    {
+      "nom": "Légumes & Fruits",
+      "items": [
+        {
+          "nom": "Courgettes",
+          "quantite": "4",
+          "conseil": "De saison, idéales pour la ratatouille et les pâtes",
+          "prix_estime": "2€",
+          "utilisation": "Ratatouille lundi, gratin mercredi"
+        }
+      ]
+    }
   ],
-  "conseils": ["Conseil 1"]
+  "conseils": [
+    "Conseil batch cooking concret",
+    "Astuce pour éviter le gaspillage"
+  ]
 }`
     try {
       const res = await fetch('/gardemanger/api-proxy.php', {
@@ -1441,245 +1570,309 @@ Réponds UNIQUEMENT en JSON valide :
 
   // ── Frigo Tab ──────────────────────────────────────────────────
   const renderFrigo = () => (
-    <div style={st.content}>
-      {urgentIngs.length > 0 && (
-        <div style={st.urgentBar}>
-          ⚠️{' '}
-          <strong>
-            {urgentIngs.length} ingrédient{urgentIngs.length > 1 ? 's' : ''} à utiliser vite :
-          </strong>{' '}
-          {urgentIngs.map((i) => i.name).join(', ')}
-        </div>
-      )}
+    <>
+      <div style={st.content}>
+        {urgentIngs.length > 0 && (
+          <div style={st.urgentBar}>
+            ⚠️{' '}
+            <strong>
+              {urgentIngs.length} ingrédient{urgentIngs.length > 1 ? 's' : ''} à utiliser vite :
+            </strong>{' '}
+            {urgentIngs.map((i) => i.name).join(', ')}
+          </div>
+        )}
 
-      {/* Sub-tabs Cuisine / Maison */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
-        {[
-          { id: 'food', label: `🥦 Cuisine (${ingredients.length})` },
-          { id: 'maison', label: `🧴 Maison (${nonFood.length})` },
-        ].map((t) => (
+        {/* Sub-tabs Cuisine / Maison */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
+          {[
+            { id: 'food', label: `🥦 Cuisine (${ingredients.length})` },
+            { id: 'maison', label: `🧴 Maison (${nonFood.length})` },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setFridgeSubTab(t.id)}
+              style={{
+                flex: 1,
+                padding: '9px',
+                borderRadius: '12px',
+                fontSize: '12px',
+                fontWeight: 700,
+                border: fridgeSubTab === t.id ? `1.5px solid ${C.brown}` : `1px solid ${C.border}`,
+                background: fridgeSubTab === t.id ? `${C.brown}12` : C.bgInset,
+                color: fridgeSubTab === t.id ? C.brown : C.textLight,
+                cursor: 'pointer',
+                fontFamily: "'Lato',sans-serif",
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Scan ticket + Analyser recette */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
           <button
-            key={t.id}
-            onClick={() => setFridgeSubTab(t.id)}
+            onClick={() => setShowTicketCamera(true)}
             style={{
               flex: 1,
-              padding: '9px',
-              borderRadius: '12px',
-              fontSize: '12px',
-              fontWeight: 700,
-              border: fridgeSubTab === t.id ? `1.5px solid ${C.brown}` : `1px solid ${C.border}`,
-              background: fridgeSubTab === t.id ? `${C.brown}12` : C.bgInset,
-              color: fridgeSubTab === t.id ? C.brown : C.textLight,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              padding: '14px 8px',
+              borderRadius: '14px',
+              background: `linear-gradient(135deg,${C.green}20,${C.green}0a)`,
+              border: `2px solid ${C.green}70`,
               cursor: 'pointer',
               fontFamily: "'Lato',sans-serif",
+              WebkitTapHighlightColor: 'transparent',
             }}
           >
-            {t.label}
+            <span style={{ fontSize: '22px' }}>🧾</span>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: C.green }}>
+              Ticket de caisse
+            </span>
           </button>
-        ))}
-      </div>
-
-      {/* Scan ticket + Analyser recette */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
-        <label
-          style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '4px',
-            padding: '14px 8px',
-            borderRadius: '14px',
-            background: `linear-gradient(135deg,${C.green}20,${C.green}0a)`,
-            border: `2px solid ${C.green}70`,
-            cursor: 'pointer',
-            fontFamily: "'Lato',sans-serif",
-            WebkitTapHighlightColor: 'transparent',
-          }}
-        >
-          <span style={{ fontSize: '22px' }}>🧾</span>
-          <span style={{ fontSize: '12px', fontWeight: 700, color: C.green }}>
-            Ticket de caisse
-          </span>
-          <input
-            type='file'
-            accept='image/*'
-            style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
-            onChange={(e) => {
-              if (e.target.files?.[0]) scanTicket(e.target.files[0])
-              e.target.value = ''
-            }}
-          />
-        </label>
-        <label
-          style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '4px',
-            padding: '14px 8px',
-            borderRadius: '14px',
-            background: `linear-gradient(135deg,${C.terra}20,${C.terra}0a)`,
-            border: `2px solid ${C.terra}70`,
-            cursor: 'pointer',
-            fontFamily: "'Lato',sans-serif",
-            WebkitTapHighlightColor: 'transparent',
-          }}
-        >
-          <span style={{ fontSize: '22px' }}>📖</span>
-          <span style={{ fontSize: '12px', fontWeight: 700, color: C.terra }}>Recette livre</span>
-          <input
-            type='file'
-            accept='image/*'
-            style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
-            onChange={(e) => {
-              if (e.target.files?.[0]) analyzeRecipePhoto(e.target.files[0])
-              e.target.value = ''
-            }}
-          />
-        </label>
-      </div>
-
-      {fridgeSubTab === 'food' ? (
-        <>
-          <div
+          <label
             style={{
+              flex: 1,
               display: 'flex',
-              justifyContent: 'space-between',
+              flexDirection: 'column',
               alignItems: 'center',
-              marginBottom: '10px',
+              justifyContent: 'center',
+              gap: '4px',
+              padding: '14px 8px',
+              borderRadius: '14px',
+              background: `linear-gradient(135deg,${C.terra}20,${C.terra}0a)`,
+              border: `2px solid ${C.terra}70`,
+              cursor: 'pointer',
+              fontFamily: "'Lato',sans-serif",
+              WebkitTapHighlightColor: 'transparent',
             }}
           >
-            <SectionLabel>Mes ingrédients ({ingredients.length})</SectionLabel>
-            <Btn variant='outline' small onClick={() => setShowAddIng(!showAddIng)}>
-              {showAddIng ? '✕ Annuler' : '+ Ajouter'}
-            </Btn>
-          </div>
+            <span style={{ fontSize: '22px' }}>📖</span>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: C.terra }}>Recette livre</span>
+            <input
+              type='file'
+              accept='image/*'
+              style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
+              onChange={(e) => {
+                if (e.target.files?.[0]) analyzeRecipePhoto(e.target.files[0])
+                e.target.value = ''
+              }}
+            />
+          </label>
+        </div>
 
-          {showAddIng && (
-            <Card accent style={{ marginBottom: '12px' }}>
-              <div style={{ marginBottom: '8px' }}>
-                <Input
-                  placeholder="Nom de l'ingrédient *"
-                  value={newIng.name}
-                  onChange={(v) => setNewIng((p) => ({ ...p, name: v }))}
-                />
-              </div>
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                <div style={{ flex: 2 }}>
+        {fridgeSubTab === 'food' ? (
+          <>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '10px',
+              }}
+            >
+              <SectionLabel>Mes ingrédients ({ingredients.length})</SectionLabel>
+              <Btn variant='outline' small onClick={() => setShowAddIng(!showAddIng)}>
+                {showAddIng ? '✕ Annuler' : '+ Ajouter'}
+                setLastTicketItems([])
+setPhotoCount(0)
+              </Btn>
+            </div>
+
+            {showAddIng && (
+              <Card accent style={{ marginBottom: '12px' }}>
+                <div style={{ marginBottom: '8px' }}>
                   <Input
-                    placeholder='Quantité'
-                    value={newIng.quantity}
-                    onChange={(v) => setNewIng((p) => ({ ...p, quantity: v }))}
+                    placeholder="Nom de l'ingrédient *"
+                    value={newIng.name}
+                    onChange={(v) => setNewIng((p) => ({ ...p, name: v }))}
                   />
                 </div>
-                <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                  <div style={{ flex: 2 }}>
+                    <Input
+                      placeholder='Quantité'
+                      value={newIng.quantity}
+                      onChange={(v) => setNewIng((p) => ({ ...p, quantity: v }))}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <Select
+                      value={newIng.unit}
+                      onChange={(v) => setNewIng((p) => ({ ...p, unit: v }))}
+                    >
+                      {UNITS.map((u) => (
+                        <option key={u}>{u}</option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+                <div style={{ marginBottom: '8px' }}>
                   <Select
-                    value={newIng.unit}
-                    onChange={(v) => setNewIng((p) => ({ ...p, unit: v }))}
+                    value={newIng.category}
+                    onChange={(v) => setNewIng((p) => ({ ...p, category: v }))}
                   >
-                    {UNITS.map((u) => (
-                      <option key={u}>{u}</option>
+                    {CATEGORIES.map((c) => (
+                      <option key={c}>{c}</option>
                     ))}
                   </Select>
                 </div>
-              </div>
-              <div style={{ marginBottom: '8px' }}>
-                <Select
-                  value={newIng.category}
-                  onChange={(v) => setNewIng((p) => ({ ...p, category: v }))}
-                >
-                  {CATEGORIES.map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </Select>
-              </div>
-              <div style={{ marginBottom: '8px' }}>
-                <Select
-                  value={newIng.storage}
-                  onChange={(v) => setNewIng((p) => ({ ...p, storage: v }))}
-                >
-                  {STORAGE_TYPES.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.icon} {s.label}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div style={{ fontSize: '11px', color: C.textLight, marginBottom: '4px' }}>
-                Date limite de consommation (optionnel)
-              </div>
-              <div style={{ marginBottom: '10px' }}>
-                <Input
-                  type='date'
-                  value={newIng.dlc}
-                  onChange={(v) => setNewIng((p) => ({ ...p, dlc: v }))}
-                />
-              </div>
-              <Btn onClick={addIngredient}>✓ Ajouter</Btn>
-            </Card>
-          )}
+                <div style={{ marginBottom: '8px' }}>
+                  <Select
+                    value={newIng.storage}
+                    onChange={(v) => setNewIng((p) => ({ ...p, storage: v }))}
+                  >
+                    {STORAGE_TYPES.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.icon} {s.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div style={{ fontSize: '11px', color: C.textLight, marginBottom: '4px' }}>
+                  Date limite de consommation (optionnel)
+                </div>
+                <div style={{ marginBottom: '10px' }}>
+                  <Input
+                    type='date'
+                    value={newIng.dlc}
+                    onChange={(v) => setNewIng((p) => ({ ...p, dlc: v }))}
+                  />
+                </div>
+                <Btn onClick={addIngredient}>✓ Ajouter</Btn>
+              </Card>
+            )}
 
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
-            {['Tous', ...CATEGORIES].map((cat) => (
-              <button
-                key={cat}
-                style={st.objBtn(filterCat === cat)}
-                onClick={() => setFilterCat(cat)}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+              {['Tous', ...CATEGORIES].map((cat) => (
+                <button
+                  key={cat}
+                  style={st.objBtn(filterCat === cat)}
+                  onClick={() => setFilterCat(cat)}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
 
-          {filteredIngs.length === 0 ? (
-            <Card>
-              <div style={{ textAlign: 'center', color: C.textLight, padding: '28px 0' }}>
-                <div style={{ fontSize: '30px', marginBottom: '8px' }}>🥦</div>Aucun ingrédient
-              </div>
-            </Card>
-          ) : (
-            <Card>
-              {filteredIngs.map((ing, i) => {
-                const st2 = STORAGE_TYPES.find((s) => s.id === ing.storage)
-                return (
+            {filteredIngs.length === 0 ? (
+              <Card>
+                <div style={{ textAlign: 'center', color: C.textLight, padding: '28px 0' }}>
+                  <div style={{ fontSize: '30px', marginBottom: '8px' }}>🥦</div>Aucun ingrédient
+                </div>
+              </Card>
+            ) : (
+              <Card>
+                {filteredIngs.map((ing, i) => {
+                  const st2 = STORAGE_TYPES.find((s) => s.id === ing.storage)
+                  return (
+                    <div
+                      key={ing.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '9px 0',
+                        borderBottom:
+                          i < filteredIngs.length - 1 ? `1px solid ${C.border}` : 'none',
+                      }}
+                    >
+                      <div style={{ flex: 1 }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          <span style={{ fontWeight: 700, fontSize: '14px', color: C.text }}>
+                            {ing.name}
+                          </span>
+                          <DlcBadge dlc={ing.dlc} />
+                        </div>
+                        <div
+                          style={{
+                            display: 'flex',
+                            gap: '4px',
+                            marginTop: '4px',
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          <Pill label={`${ing.quantity}${ing.unit}`} color={C.textLight} />
+                          <Pill label={ing.category} color={C.brownLight} />
+                          {st2 && <Pill label={`${st2.icon} ${st2.label}`} color={st2.color} />}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setIngredients((p) => p.filter((x) => x.id !== ing.id))}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: C.border,
+                          cursor: 'pointer',
+                          fontSize: '20px',
+                          padding: '4px',
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )
+                })}
+              </Card>
+            )}
+          </>
+        ) : (
+          <>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '10px',
+              }}
+            >
+              <SectionLabel>Produits maison ({nonFood.length})</SectionLabel>
+            </div>
+            {nonFood.length === 0 ? (
+              <Card>
+                <div style={{ textAlign: 'center', color: C.textLight, padding: '28px 0' }}>
+                  <div style={{ fontSize: '30px', marginBottom: '8px' }}>🧴</div>Aucun produit.
+                  Scanne un ticket !
+                </div>
+              </Card>
+            ) : (
+              <Card>
+                {nonFood.map((item, i) => (
                   <div
-                    key={ing.id}
+                    key={item.id}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
                       padding: '9px 0',
-                      borderBottom: i < filteredIngs.length - 1 ? `1px solid ${C.border}` : 'none',
+                      borderBottom: i < nonFood.length - 1 ? `1px solid ${C.border}` : 'none',
                     }}
                   >
                     <div style={{ flex: 1 }}>
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          flexWrap: 'wrap',
-                        }}
-                      >
-                        <span style={{ fontWeight: 700, fontSize: '14px', color: C.text }}>
-                          {ing.name}
-                        </span>
-                        <DlcBadge dlc={ing.dlc} />
-                      </div>
+                      <span style={{ fontWeight: 700, fontSize: '14px', color: C.text }}>
+                        {item.name}
+                      </span>
                       <div
                         style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}
                       >
-                        <Pill label={`${ing.quantity}${ing.unit}`} color={C.textLight} />
-                        <Pill label={ing.category} color={C.brownLight} />
-                        {st2 && <Pill label={`${st2.icon} ${st2.label}`} color={st2.color} />}
+                        <Pill label={`${item.quantity}${item.unit}`} color={C.textLight} />
+                        <Pill label={item.category} color={C.brownMid} />
+                        {item.prix && <Pill label={`${item.prix}€`} color={C.green} />}
                       </div>
                     </div>
                     <button
-                      onClick={() => setIngredients((p) => p.filter((x) => x.id !== ing.id))}
+                      onClick={() => setNonFood((p) => p.filter((x) => x.id !== item.id))}
                       style={{
                         background: 'none',
                         border: 'none',
@@ -1692,623 +1885,485 @@ Réponds UNIQUEMENT en JSON valide :
                       ×
                     </button>
                   </div>
-                )
-              })}
-            </Card>
-          )}
-        </>
-      ) : (
-        <>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: '10px',
-            }}
-          >
-            <SectionLabel>Produits maison ({nonFood.length})</SectionLabel>
-          </div>
-          {nonFood.length === 0 ? (
-            <Card>
-              <div style={{ textAlign: 'center', color: C.textLight, padding: '28px 0' }}>
-                <div style={{ fontSize: '30px', marginBottom: '8px' }}>🧴</div>Aucun produit. Scanne
-                un ticket !
-              </div>
-            </Card>
-          ) : (
-            <Card>
-              {nonFood.map((item, i) => (
-                <div
-                  key={item.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '9px 0',
-                    borderBottom: i < nonFood.length - 1 ? `1px solid ${C.border}` : 'none',
-                  }}
-                >
-                  <div style={{ flex: 1 }}>
-                    <span style={{ fontWeight: 700, fontSize: '14px', color: C.text }}>
-                      {item.name}
-                    </span>
-                    <div
-                      style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}
-                    >
-                      <Pill label={`${item.quantity}${item.unit}`} color={C.textLight} />
-                      <Pill label={item.category} color={C.brownMid} />
-                      {item.prix && <Pill label={`${item.prix}€`} color={C.green} />}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setNonFood((p) => p.filter((x) => x.id !== item.id))}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: C.border,
-                      cursor: 'pointer',
-                      fontSize: '20px',
-                      padding: '4px',
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </Card>
-          )}
-        </>
-      )}
-
-      {/* Scan confirm panel */}
-      {showScanPanel && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: '#3a2a1a88',
-            zIndex: 100,
-            display: 'flex',
-            alignItems: 'flex-end',
-          }}
-        >
-          <div
-            style={{
-              background: C.bgCard,
-              borderRadius: '24px 24px 0 0',
-              padding: '20px',
-              width: '100%',
-              maxWidth: '430px',
-              margin: '0 auto',
-              maxHeight: '85vh',
-              overflowY: 'auto',
-              boxShadow: `0 -8px 32px ${C.brown}30`,
-            }}
-          >
-            {scanLoading ? (
-              <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                <div style={{ fontSize: '32px', marginBottom: '12px' }}>🧾</div>
-                <div
-                  style={{
-                    fontFamily: "'Playfair Display',serif",
-                    fontSize: '16px',
-                    color: C.brown,
-                    marginBottom: '6px',
-                  }}
-                >
-                  Lecture du ticket...
-                </div>
-                <div style={{ fontSize: '12px', color: C.textLight }}>
-                  Le chef analyse tes courses
-                </div>
-              </div>
-            ) : scanResult?.error ? (
-              <div style={{ textAlign: 'center', padding: '32px 0' }}>
-                <div style={{ fontSize: '30px', marginBottom: '8px' }}>❌</div>
-                <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
-                  Impossible de lire ce ticket. Essaie avec une photo plus nette.
-                </div>
-                <Btn variant='outline' onClick={() => setShowScanPanel(false)}>
-                  Fermer
-                </Btn>
-              </div>
-            ) : (
-              scanConfirm && (
-                <>
-                  <div
-                    style={{
-                      fontFamily: "'Playfair Display',serif",
-                      fontSize: '18px',
-                      fontWeight: 700,
-                      color: C.brown,
-                      marginBottom: '4px',
-                    }}
-                  >
-                    🧾 Ticket analysé
-                  </div>
-                  {scanResult && (
-                    <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '16px' }}>
-                      {[scanResult.enseigne, scanResult.lieu, scanResult.date]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </div>
-                  )}
-
-                  {/* Alimentaire */}
-                  {scanConfirm.filter((i) => i.type === 'food').length > 0 && (
-                    <>
-                      <SectionLabel>
-                        🥦 Alimentaire (
-                        {scanConfirm.filter((i) => i.type === 'food' && i.selected).length}{' '}
-                        sélectionnés)
-                      </SectionLabel>
-                      {scanConfirm
-                        .filter((i) => i.type === 'food')
-                        .map((item, idx) => (
-                          <div
-                            key={idx}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '10px',
-                              padding: '8px 0',
-                              borderBottom: `1px solid ${C.border}`,
-                              cursor: 'pointer',
-                            }}
-                            onClick={() =>
-                              setScanConfirm((p) =>
-                                p.map((x, i2) =>
-                                  i2 === scanConfirm.indexOf(item)
-                                    ? { ...x, selected: !x.selected }
-                                    : x
-                                )
-                              )
-                            }
-                          >
-                            <div
-                              style={{
-                                width: '20px',
-                                height: '20px',
-                                borderRadius: '6px',
-                                border: `2px solid ${item.selected ? C.green : C.border}`,
-                                background: item.selected ? C.green : 'transparent',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                flexShrink: 0,
-                              }}
-                            >
-                              {item.selected && (
-                                <span style={{ color: '#fff', fontSize: '12px' }}>✓</span>
-                              )}
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <span
-                                style={{
-                                  fontWeight: 600,
-                                  fontSize: '13px',
-                                  color: item.selected ? C.text : C.textLight,
-                                }}
-                              >
-                                {item.nom}
-                              </span>
-                              <span
-                                style={{ fontSize: '11px', color: C.textLight, marginLeft: '6px' }}
-                              >
-                                {item.quantite}
-                                {item.unite}
-                              </span>
-                              {item.prix && (
-                                <span
-                                  style={{ fontSize: '11px', color: C.green, marginLeft: '6px' }}
-                                >
-                                  {item.prix}€
-                                </span>
-                              )}
-                            </div>
-                            <span style={{ fontSize: '10px', color: C.textLight }}>
-                              {item.categorie}
-                            </span>
-                          </div>
-                        ))}
-                    </>
-                  )}
-
-                  {/* Non-alimentaire */}
-                  {scanConfirm.filter((i) => i.type === 'nonfood').length > 0 && (
-                    <div style={{ marginTop: '14px' }}>
-                      <SectionLabel>
-                        🧴 Maison (
-                        {scanConfirm.filter((i) => i.type === 'nonfood' && i.selected).length}{' '}
-                        sélectionnés)
-                      </SectionLabel>
-                      {scanConfirm
-                        .filter((i) => i.type === 'nonfood')
-                        .map((item, idx) => (
-                          <div
-                            key={idx}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '10px',
-                              padding: '8px 0',
-                              borderBottom: `1px solid ${C.border}`,
-                              cursor: 'pointer',
-                            }}
-                            onClick={() =>
-                              setScanConfirm((p) =>
-                                p.map((x, i2) =>
-                                  i2 === scanConfirm.indexOf(item)
-                                    ? { ...x, selected: !x.selected }
-                                    : x
-                                )
-                              )
-                            }
-                          >
-                            <div
-                              style={{
-                                width: '20px',
-                                height: '20px',
-                                borderRadius: '6px',
-                                border: `2px solid ${item.selected ? C.brownMid : C.border}`,
-                                background: item.selected ? C.brownMid : 'transparent',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                flexShrink: 0,
-                              }}
-                            >
-                              {item.selected && (
-                                <span style={{ color: '#fff', fontSize: '12px' }}>✓</span>
-                              )}
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <span
-                                style={{
-                                  fontWeight: 600,
-                                  fontSize: '13px',
-                                  color: item.selected ? C.text : C.textLight,
-                                }}
-                              >
-                                {item.nom}
-                              </span>
-                              {item.prix && (
-                                <span
-                                  style={{ fontSize: '11px', color: C.green, marginLeft: '6px' }}
-                                >
-                                  {item.prix}€
-                                </span>
-                              )}
-                            </div>
-                            <span style={{ fontSize: '10px', color: C.textLight }}>
-                              {item.categorie}
-                            </span>
-                          </div>
-                        ))}
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '18px' }}>
-                    <Btn variant='outline' onClick={() => setShowScanPanel(false)}>
-                      Annuler
-                    </Btn>
-                    <div style={{ flex: 1 }}>
-                      <Btn variant='green' onClick={confirmScanImport}>
-                        ✓ Importer la sélection
-                      </Btn>
-                    </div>
-                  </div>
-                </>
-              )
+                ))}
+              </Card>
             )}
-          </div>
-        </div>
-      )}
+          </>
+        )}
 
-      {/* Recipe analysis panel */}
-      {showRecipeAnalysis && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: '#3a2a1a88',
-            zIndex: 100,
-            display: 'flex',
-            alignItems: 'flex-end',
-          }}
-        >
+        {/* Scan confirm panel */}
+        {showScanPanel && (
           <div
             style={{
-              background: C.bgCard,
-              borderRadius: '24px 24px 0 0',
-              padding: '20px',
-              width: '100%',
-              maxWidth: '430px',
-              margin: '0 auto',
-              maxHeight: '88vh',
-              overflowY: 'auto',
-              boxShadow: `0 -8px 32px ${C.brown}30`,
+              position: 'fixed',
+              inset: 0,
+              background: '#3a2a1a88',
+              zIndex: 100,
+              display: 'flex',
+              alignItems: 'flex-end',
             }}
           >
-            {recipeAnalysisLoading ? (
-              <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                <div style={{ fontSize: '32px', marginBottom: '12px' }}>📖</div>
-                <div
-                  style={{
-                    fontFamily: "'Playfair Display',serif",
-                    fontSize: '16px',
-                    color: C.brown,
-                    marginBottom: '6px',
-                  }}
-                >
-                  Lecture de la recette...
-                </div>
-                <div style={{ fontSize: '12px', color: C.textLight }}>
-                  Croisement avec ton inventaire en cours
-                </div>
-              </div>
-            ) : recipeAnalysisResult?.error ? (
-              <div style={{ textAlign: 'center', padding: '32px 0' }}>
-                <div style={{ fontSize: '30px', marginBottom: '8px' }}>❌</div>
-                <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
-                  Impossible de lire cette recette. Essaie avec une photo plus nette.
-                </div>
-                <Btn
-                  variant='outline'
-                  onClick={() => {
-                    setShowRecipeAnalysis(false)
-                    setRecipeAnalysisResult(null)
-                  }}
-                >
-                  Fermer
-                </Btn>
-              </div>
-            ) : (
-              recipeAnalysisResult && (
-                <>
+            <div
+              style={{
+                background: C.bgCard,
+                borderRadius: '24px 24px 0 0',
+                padding: '20px',
+                width: '100%',
+                maxWidth: '430px',
+                margin: '0 auto',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                boxShadow: `0 -8px 32px ${C.brown}30`,
+              }}
+            >
+              {scanLoading ? (
+  <div style={{ textAlign: 'center', padding: '40px 0' }}>
+    <div style={{ fontSize: '32px', marginBottom: '12px' }}>🧾</div>
+    <div style={{ fontFamily: "'Playfair Display',serif", fontSize: '16px', color: C.brown, marginBottom: '6px' }}>
+      Lecture du ticket...
+    </div>
+    <div style={{ fontSize: '12px', color: C.textLight }}>Extraction en cours</div>
+  </div>
+) : scanResult?.error ? (
+  <div style={{ textAlign: 'center', padding: '32px 0' }}>
+    <div style={{ fontSize: '30px', marginBottom: '8px' }}>❌</div>
+    <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
+      Impossible de lire ce ticket.
+    </div>
+    <Btn variant='outline' onClick={() => setShowScanPanel(false)}>Fermer</Btn>
+  </div>
+) : (
+  <>
+    <div style={{ fontFamily: "'Playfair Display',serif", fontSize: '18px', fontWeight: 700, color: C.brown, marginBottom: '4px' }}>
+      🧾 {scanResult?.enseigne} — {scanResult?.lieu}
+    </div>
+    <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '14px' }}>{scanResult?.date}</div>
+
+    {offLoading && (
+      <div style={{ padding: '10px 12px', background: `${C.green}10`, borderRadius: '10px', marginBottom: '14px', fontSize: '12px', color: C.green }}>
+        🔍 Recherche Open Food Facts en cours...
+      </div>
+    )}
+
+    {/* Stats */}
+    {!offLoading && (
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+        {[
+          { label: '✅ Reconnus', count: scanPhases.haute.length, color: C.green },
+          { label: '🔍 À confirmer', count: scanPhases.moyenne.length, color: '#d4a017' },
+          { label: '❓ Inconnus', count: scanPhases.basse.length, color: C.terra },
+        ].map(s => (
+          <div key={s.label} style={{ flex: 1, textAlign: 'center', padding: '8px 4px', borderRadius: '10px', background: s.color + '15', border: `1px solid ${s.color}30` }}>
+            <div style={{ fontSize: '18px', fontWeight: 800, color: s.color }}>{s.count}</div>
+            <div style={{ fontSize: '9px', color: s.color, fontWeight: 600 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+    )}
+
+    {/* ✅ Haute confiance */}
+    {scanPhases.haute.length > 0 && (
+      <div style={{ marginBottom: '14px' }}>
+        <SectionLabel>✅ Reconnus directement</SectionLabel>
+        {scanPhases.haute.map((item, idx) => (
+          <div key={idx} onClick={() => setScanPhases(p => ({ ...p, haute: p.haute.map((x, i) => i === idx ? { ...x, selected: !x.selected } : x) }))}
+            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 0', borderBottom: `1px solid ${C.border}`, cursor: 'pointer', opacity: item.selected ? 1 : 0.5 }}>
+            <div style={{ width: '18px', height: '18px', borderRadius: '5px', border: `2px solid ${item.selected ? C.green : C.border}`, background: item.selected ? C.green : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {item.selected && <span style={{ color: '#fff', fontSize: '11px' }}>✓</span>}
+            </div>
+            <div style={{ flex: 1 }}>
+              <span style={{ fontWeight: 600, fontSize: '13px', color: C.text }}>{item.texte_brut}</span>
+              <span style={{ fontSize: '11px', color: C.textLight, marginLeft: '8px' }}>{item.poids}</span>
+            </div>
+            {item.prix && <span style={{ fontSize: '11px', color: C.green }}>{item.prix}€</span>}
+          </div>
+        ))}
+      </div>
+    )}
+
+    {/* 🔍 Moyenne confiance — candidats OFF */}
+    {scanPhases.moyenne.length > 0 && (
+      <div style={{ marginBottom: '14px' }}>
+        <SectionLabel>🔍 À confirmer</SectionLabel>
+        {scanPhases.moyenne.map((item, idx) => (
+          <div key={idx} style={{ marginBottom: '10px', padding: '10px', background: '#d4a01710', borderRadius: '12px', border: '1px solid #d4a01730' }}>
+            <div style={{ fontSize: '11px', color: C.textLight, marginBottom: '6px' }}>
+              Ticket : <span style={{ fontFamily: 'monospace' }}>{item.texte_brut}</span>
+            </div>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              {item.candidats?.map((c, ci) => (
+                <button key={ci} onClick={() => setScanPhases(p => ({ ...p, moyenne: p.moyenne.map((x, i) => i === idx ? { ...x, selected_candidat: ci, selected: true } : x) }))}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 8px', borderRadius: '10px', border: item.selected_candidat === ci ? `2px solid ${C.green}` : `1px solid ${C.border}`, background: item.selected_candidat === ci ? `${C.green}15` : C.bgInset, cursor: 'pointer' }}>
+                  {c.image && <img src={c.image} style={{ width: '28px', height: '28px', objectFit: 'contain', borderRadius: '4px' }} />}
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: C.text }}>{c.nom} {c.poids}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+
+    {/* ❓ Basse confiance */}
+    {scanPhases.basse.length > 0 && (
+      <div style={{ marginBottom: '14px' }}>
+        <SectionLabel>❓ Non reconnus — à ignorer ou corriger manuellement</SectionLabel>
+        {scanPhases.basse.map((item, idx) => (
+          <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 0', borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ flex: 1 }}>
+              <span style={{ fontSize: '12px', fontFamily: 'monospace', color: C.textMid }}>{item.texte_brut}</span>
+              {item.prix && <span style={{ fontSize: '11px', color: C.green, marginLeft: '8px' }}>{item.prix}€</span>}
+            </div>
+            <button onClick={() => setScanPhases(p => ({ ...p, basse: p.basse.filter((_, i) => i !== idx) }))}
+              style={{ background: 'none', border: 'none', color: C.border, cursor: 'pointer', fontSize: '16px' }}>×</button>
+          </div>
+        ))}
+      </div>
+    )}
+
+    <div style={{ display: 'flex', gap: '8px', marginTop: '18px' }}>
+      <Btn variant='outline' onClick={() => setShowScanPanel(false)}>Annuler</Btn>
+      <div style={{ flex: 1 }}>
+        <Btn variant='green' onClick={() => {
+          const today = new Date();
+          // Import haute confiance sélectionnés
+          [...scanPhases.haute.filter(i => i.selected), ...scanPhases.moyenne.filter(i => i.selected)].forEach(item => {
+            const nom = item.candidats?.[item.selected_candidat]?.nom || item.texte_brut;
+            if (item.type === 'alimentaire') {
+              setIngredients(p => [...p, { id: Date.now() + Math.random(), name: nom, quantity: '1', unit: item.poids || 'pièce(s)', category: 'Autre', dlc: '', storage: 'garde_manger' }]);
+            } else {
+              setNonFood(p => [...p, { id: Date.now() + Math.random(), name: nom, quantity: '1', unit: 'pièce(s)', category: 'Autre maison', prix: item.prix }]);
+            }
+          });
+          setShowScanPanel(false);
+          setScanPhases({ haute: [], moyenne: [], basse: [] });
+        }}>
+          ✓ Importer ({scanPhases.haute.filter(i => i.selected).length + scanPhases.moyenne.filter(i => i.selected).length})
+        </Btn>
+      </div>
+    </div>
+  </>
+)}
+
+        {/* Recipe analysis panel */}
+        {showRecipeAnalysis && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: '#3a2a1a88',
+              zIndex: 100,
+              display: 'flex',
+              alignItems: 'flex-end',
+            }}
+          >
+            <div
+              style={{
+                background: C.bgCard,
+                borderRadius: '24px 24px 0 0',
+                padding: '20px',
+                width: '100%',
+                maxWidth: '430px',
+                margin: '0 auto',
+                maxHeight: '88vh',
+                overflowY: 'auto',
+                boxShadow: `0 -8px 32px ${C.brown}30`,
+              }}
+            >
+              {recipeAnalysisLoading ? (
+                <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                  <div style={{ fontSize: '32px', marginBottom: '12px' }}>📖</div>
                   <div
                     style={{
                       fontFamily: "'Playfair Display',serif",
-                      fontSize: '18px',
-                      fontWeight: 700,
+                      fontSize: '16px',
                       color: C.brown,
-                      marginBottom: '2px',
+                      marginBottom: '6px',
                     }}
                   >
-                    📖 {recipeAnalysisResult.nom_recette}
+                    Lecture de la recette...
                   </div>
-                  <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '16px' }}>
-                    {recipeAnalysisResult.portions_recette} portions ·{' '}
-                    {recipeAnalysisResult.ingredients?.length} ingrédients analysés
+                  <div style={{ fontSize: '12px', color: C.textLight }}>
+                    Croisement avec ton inventaire en cours
                   </div>
-
-                  {/* Stats rapides */}
-                  <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                    {[
-                      {
-                        label: "✅ J'ai",
-                        count: recipeAnalysisResult.ingredients?.filter(
-                          (i) => i.statut === 'disponible'
-                        ).length,
-                        color: C.green,
-                      },
-                      {
-                        label: '🔄 Substitut',
-                        count: recipeAnalysisResult.ingredients?.filter(
-                          (i) => i.statut === 'substituable'
-                        ).length,
-                        color: '#d4a017',
-                      },
-                      {
-                        label: '🛒 Manque',
-                        count: recipeAnalysisResult.ingredients?.filter(
-                          (i) => i.statut === 'manquant'
-                        ).length,
-                        color: C.terra,
-                      },
-                    ].map((s) => (
-                      <div
-                        key={s.label}
-                        style={{
-                          flex: 1,
-                          textAlign: 'center',
-                          padding: '8px 4px',
-                          borderRadius: '10px',
-                          background: s.color + '15',
-                          border: `1px solid ${s.color}30`,
-                        }}
-                      >
-                        <div style={{ fontSize: '18px', fontWeight: 800, color: s.color }}>
-                          {s.count}
-                        </div>
-                        <div style={{ fontSize: '9px', color: s.color, fontWeight: 600 }}>
-                          {s.label}
-                        </div>
-                      </div>
-                    ))}
+                </div>
+              ) : recipeAnalysisResult?.error ? (
+                <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                  <div style={{ fontSize: '30px', marginBottom: '8px' }}>❌</div>
+                  <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
+                    Impossible de lire cette recette. Essaie avec une photo plus nette.
                   </div>
-
-                  {/* Ingrédients par statut */}
-                  {['disponible', 'substituable', 'manquant'].map((statut) => {
-                    const items =
-                      recipeAnalysisResult.ingredients?.filter((i) => i.statut === statut) || []
-                    if (!items.length) return null
-                    const cfg = {
-                      disponible: { icon: '✅', color: C.green, label: 'Dans ton frigo' },
-                      substituable: { icon: '🔄', color: '#d4a017', label: 'Substituable' },
-                      manquant: { icon: '🛒', color: C.terra, label: 'À acheter' },
-                    }[statut]
-                    return (
-                      <div key={statut} style={{ marginBottom: '14px' }}>
-                        <div
-                          style={{
-                            fontSize: '10px',
-                            fontWeight: 700,
-                            color: cfg.color,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.8px',
-                            marginBottom: '8px',
-                          }}
-                        >
-                          {cfg.icon} {cfg.label}
-                        </div>
-                        {items.map((ing, i) => (
-                          <div
-                            key={i}
-                            style={{
-                              padding: '8px 10px',
-                              borderRadius: '10px',
-                              background: cfg.color + '0d',
-                              border: `1px solid ${cfg.color}25`,
-                              marginBottom: '6px',
-                            }}
-                          >
-                            <div
-                              style={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'flex-start',
-                              }}
-                            >
-                              <div style={{ flex: 1 }}>
-                                <span style={{ fontWeight: 700, fontSize: '13px', color: C.text }}>
-                                  {ing.nom}
-                                </span>
-                                <div
-                                  style={{
-                                    display: 'flex',
-                                    gap: '6px',
-                                    alignItems: 'center',
-                                    marginTop: '2px',
-                                    flexWrap: 'wrap',
-                                  }}
-                                >
-                                  {/* Quantité recette */}
-                                  <span style={{ fontSize: '11px', color: C.textMid }}>
-                                    Recette : {ing.quantite_recette || ing.quantite} {ing.unite}
-                                  </span>
-                                  {/* Quantité gonflée si différente */}
-                                  {ing.quantite_course &&
-                                    ing.quantite_course !== ing.quantite_recette && (
-                                      <span
-                                        style={{
-                                          fontSize: '11px',
-                                          fontWeight: 700,
-                                          color: C.terra,
-                                          background: `${C.terra}15`,
-                                          padding: '1px 6px',
-                                          borderRadius: '8px',
-                                        }}
-                                      >
-                                        → À acheter : {ing.quantite_course} {ing.unite}
-                                      </span>
-                                    )}
-                                </div>
-                                {ing.note_quantite && (
-                                  <div
-                                    style={{
-                                      fontSize: '10px',
-                                      color: C.terra,
-                                      marginTop: '2px',
-                                      fontStyle: 'italic',
-                                    }}
-                                  >
-                                    💡 {ing.note_quantite}
-                                  </div>
-                                )}
-                                {ing.substitut && (
-                                  <div
-                                    style={{ fontSize: '11px', color: '#d4a017', marginTop: '2px' }}
-                                  >
-                                    → Utilise : {ing.substitut}
-                                  </div>
-                                )}
-                                {ing.note && (
-                                  <div
-                                    style={{
-                                      fontSize: '11px',
-                                      color: C.textLight,
-                                      marginTop: '2px',
-                                      fontStyle: 'italic',
-                                    }}
-                                  >
-                                    {ing.note}
-                                  </div>
-                                )}
-                              </div>
-                              {/* Bouton + pour ajouter à la liste */}
-                              {statut === 'manquant' && (
-                                <button
-                                  onClick={() => addSingleToShoppingList(ing)}
-                                  style={{
-                                    background: C.terra,
-                                    border: 'none',
-                                    borderRadius: '8px',
-                                    color: '#fff',
-                                    fontWeight: 700,
-                                    fontSize: '16px',
-                                    width: '28px',
-                                    height: '28px',
-                                    cursor: 'pointer',
-                                    flexShrink: 0,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    marginLeft: '8px',
-                                  }}
-                                >
-                                  +
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  })}
-
-                  {recipeAnalysisResult.conseil_chef && (
+                  <Btn
+                    variant='outline'
+                    onClick={() => {
+                      setShowRecipeAnalysis(false)
+                      setRecipeAnalysisResult(null)
+                    }}
+                  >
+                    Fermer
+                  </Btn>
+                </div>
+              ) : (
+                recipeAnalysisResult && (
+                  <>
                     <div
                       style={{
-                        padding: '10px 12px',
-                        background: `${C.green}10`,
-                        borderRadius: '10px',
-                        border: `1px solid ${C.green}30`,
-                        marginBottom: '16px',
+                        fontFamily: "'Playfair Display',serif",
+                        fontSize: '18px',
+                        fontWeight: 700,
+                        color: C.brown,
+                        marginBottom: '2px',
                       }}
                     >
-                      <span style={{ fontSize: '12px', color: C.green }}>
-                        💡 {recipeAnalysisResult.conseil_chef}
-                      </span>
+                      📖 {recipeAnalysisResult.nom_recette}
                     </div>
-                  )}
+                    <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '16px' }}>
+                      {recipeAnalysisResult.portions_recette} portions ·{' '}
+                      {recipeAnalysisResult.ingredients?.length} ingrédients analysés
+                    </div>
 
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <Btn
-                      variant='outline'
-                      onClick={() => {
-                        setShowRecipeAnalysis(false)
-                        setRecipeAnalysisResult(null)
-                      }}
-                    >
-                      Fermer
-                    </Btn>
-                    {recipeAnalysisResult.ingredients?.some((i) => i.statut === 'manquant') && (
-                      <div style={{ flex: 1 }}>
-                        <Btn variant='green' onClick={addMissingToShoppingList}>
-                          🛒 Ajouter aux courses
-                        </Btn>
+                    {/* Stats rapides */}
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                      {[
+                        {
+                          label: "✅ J'ai",
+                          count: recipeAnalysisResult.ingredients?.filter(
+                            (i) => i.statut === 'disponible'
+                          ).length,
+                          color: C.green,
+                        },
+                        {
+                          label: '🔄 Substitut',
+                          count: recipeAnalysisResult.ingredients?.filter(
+                            (i) => i.statut === 'substituable'
+                          ).length,
+                          color: '#d4a017',
+                        },
+                        {
+                          label: '🛒 Manque',
+                          count: recipeAnalysisResult.ingredients?.filter(
+                            (i) => i.statut === 'manquant'
+                          ).length,
+                          color: C.terra,
+                        },
+                      ].map((s) => (
+                        <div
+                          key={s.label}
+                          style={{
+                            flex: 1,
+                            textAlign: 'center',
+                            padding: '8px 4px',
+                            borderRadius: '10px',
+                            background: s.color + '15',
+                            border: `1px solid ${s.color}30`,
+                          }}
+                        >
+                          <div style={{ fontSize: '18px', fontWeight: 800, color: s.color }}>
+                            {s.count}
+                          </div>
+                          <div style={{ fontSize: '9px', color: s.color, fontWeight: 600 }}>
+                            {s.label}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Ingrédients par statut */}
+                    {['disponible', 'substituable', 'manquant'].map((statut) => {
+                      const items =
+                        recipeAnalysisResult.ingredients?.filter((i) => i.statut === statut) || []
+                      if (!items.length) return null
+                      const cfg = {
+                        disponible: { icon: '✅', color: C.green, label: 'Dans ton frigo' },
+                        substituable: { icon: '🔄', color: '#d4a017', label: 'Substituable' },
+                        manquant: { icon: '🛒', color: C.terra, label: 'À acheter' },
+                      }[statut]
+                      return (
+                        <div key={statut} style={{ marginBottom: '14px' }}>
+                          <div
+                            style={{
+                              fontSize: '10px',
+                              fontWeight: 700,
+                              color: cfg.color,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.8px',
+                              marginBottom: '8px',
+                            }}
+                          >
+                            {cfg.icon} {cfg.label}
+                          </div>
+                          {items.map((ing, i) => (
+                            <div
+                              key={i}
+                              style={{
+                                padding: '8px 10px',
+                                borderRadius: '10px',
+                                background: cfg.color + '0d',
+                                border: `1px solid ${cfg.color}25`,
+                                marginBottom: '6px',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'flex-start',
+                                }}
+                              >
+                                <div style={{ flex: 1 }}>
+                                  <span
+                                    style={{ fontWeight: 700, fontSize: '13px', color: C.text }}
+                                  >
+                                    {ing.nom}
+                                  </span>
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      gap: '6px',
+                                      alignItems: 'center',
+                                      marginTop: '2px',
+                                      flexWrap: 'wrap',
+                                    }}
+                                  >
+                                    {/* Quantité recette */}
+                                    <span style={{ fontSize: '11px', color: C.textMid }}>
+                                      Recette : {ing.quantite_recette || ing.quantite} {ing.unite}
+                                    </span>
+                                    {/* Quantité gonflée si différente */}
+                                    {ing.quantite_course &&
+                                      ing.quantite_course !== ing.quantite_recette && (
+                                        <span
+                                          style={{
+                                            fontSize: '11px',
+                                            fontWeight: 700,
+                                            color: C.terra,
+                                            background: `${C.terra}15`,
+                                            padding: '1px 6px',
+                                            borderRadius: '8px',
+                                          }}
+                                        >
+                                          → À acheter : {ing.quantite_course} {ing.unite}
+                                        </span>
+                                      )}
+                                  </div>
+                                  {ing.note_quantite && (
+                                    <div
+                                      style={{
+                                        fontSize: '10px',
+                                        color: C.terra,
+                                        marginTop: '2px',
+                                        fontStyle: 'italic',
+                                      }}
+                                    >
+                                      💡 {ing.note_quantite}
+                                    </div>
+                                  )}
+                                  {ing.substitut && (
+                                    <div
+                                      style={{
+                                        fontSize: '11px',
+                                        color: '#d4a017',
+                                        marginTop: '2px',
+                                      }}
+                                    >
+                                      → Utilise : {ing.substitut}
+                                    </div>
+                                  )}
+                                  {ing.note && (
+                                    <div
+                                      style={{
+                                        fontSize: '11px',
+                                        color: C.textLight,
+                                        marginTop: '2px',
+                                        fontStyle: 'italic',
+                                      }}
+                                    >
+                                      {ing.note}
+                                    </div>
+                                  )}
+                                </div>
+                                {/* Bouton + pour ajouter à la liste */}
+                                {statut === 'manquant' && (
+                                  <button
+                                    onClick={() => addSingleToShoppingList(ing)}
+                                    style={{
+                                      background: C.terra,
+                                      border: 'none',
+                                      borderRadius: '8px',
+                                      color: '#fff',
+                                      fontWeight: 700,
+                                      fontSize: '16px',
+                                      width: '28px',
+                                      height: '28px',
+                                      cursor: 'pointer',
+                                      flexShrink: 0,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      marginLeft: '8px',
+                                    }}
+                                  >
+                                    +
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })}
+
+                    {recipeAnalysisResult.conseil_chef && (
+                      <div
+                        style={{
+                          padding: '10px 12px',
+                          background: `${C.green}10`,
+                          borderRadius: '10px',
+                          border: `1px solid ${C.green}30`,
+                          marginBottom: '16px',
+                        }}
+                      >
+                        <span style={{ fontSize: '12px', color: C.green }}>
+                          💡 {recipeAnalysisResult.conseil_chef}
+                        </span>
                       </div>
                     )}
-                  </div>
-                </>
-              )
-            )}
+
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <Btn
+                        variant='outline'
+                        onClick={() => {
+                          setShowRecipeAnalysis(false)
+                          setRecipeAnalysisResult(null)
+                        }}
+                      >
+                        Fermer
+                      </Btn>
+                      {recipeAnalysisResult.ingredients?.some((i) => i.statut === 'manquant') && (
+                        <div style={{ flex: 1 }}>
+                          <Btn variant='green' onClick={addMissingToShoppingList}>
+                            🛒 Ajouter aux courses
+                          </Btn>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )
+              )}
+            </div>
           </div>
-        </div>
+        )}
+      </div>
+      {showTicketCamera && (
+        <TicketCamera
+          onCapture={(file) => {
+            setShowTicketCamera(false)
+            scanTicket(file)
+          }}
+          onClose={() => setShowTicketCamera(false)}
+        />
       )}
-    </div>
+    </>
   )
 
   // ── Equipment Tab ──────────────────────────────────────────────
