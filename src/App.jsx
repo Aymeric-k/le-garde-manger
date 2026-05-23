@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import TicketCamera from './components/TicketCamera'
 import { searchProduct, getProductByBarcode } from './services/openFoodFacts'
 
+import BarcodeScanner from './components/BarcodeScanner'
 // ─── Palette & Design Tokens ───────────────────────────────────────────────
 const C = {
   bg: '#f5f0e8', // parchemin chaud
@@ -187,7 +188,41 @@ function detectDoublons(newItems, existingItems) {
     return { ...item, doublon: doublon || null }
   })
 }
+const handleBarcodeResult = async (barcode) => {
+  setShowBarcodeScanner(false)
+  if (!currentBarcodeTarget) return
 
+  const product = await getProductByBarcode(barcode)
+  if (!product) return
+
+  const { idx, phase } = currentBarcodeTarget
+
+  setScanPhases((p) => ({
+    ...p,
+    [phase]: p[phase].map((item, i) =>
+      i !== idx
+        ? item
+        : {
+            ...item,
+            candidats: [product],
+            selected_candidat: 0,
+            selected: true,
+          }
+    ),
+  }))
+
+  // Déplace de basse → moyenne si trouvé
+  if (phase === 'basse') {
+    setScanPhases((p) => {
+      const item = { ...p.basse[idx], candidats: [product], selected_candidat: 0, selected: true }
+      return {
+        ...p,
+        basse: p.basse.filter((_, i) => i !== idx),
+        moyenne: [...p.moyenne, item],
+      }
+    })
+  }
+}
 // ─── Micro Components ──────────────────────────────────────────────────────
 function DlcBadge({ dlc }) {
   const d = getDaysLeft(dlc)
@@ -522,7 +557,8 @@ export default function App() {
   })
   const [offLoading, setOffLoading] = useState(false) // Open Food Facts en cours
   // TODO: scan code-barres — à implémenter avec @zxing/library
-  // const [currentBarcodeTarget, setCurrentBarcodeTarget] = useState(null)
+  const [currentBarcodeTarget, setCurrentBarcodeTarget] = useState(null)
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
   const [scanConfirm, setScanConfirm] = useState(null)
   const [fridgeSubTab, setFridgeSubTab] = useState('food')
   const [lastTicketItems, setLastTicketItems] = useState([]) // 3 derniers articles
@@ -1473,13 +1509,19 @@ Réponds UNIQUEMENT en JSON valide :
       background: C.bg,
       color: C.text,
       fontFamily: "'Lato',sans-serif",
+      width: '100%',
       maxWidth: '430px',
       margin: '0 auto',
+      flexShrink: 0,
+      boxSizing: 'border-box',
+      textAlign: 'left',
     },
     header: {
       padding: '20px 18px 14px',
       background: `linear-gradient(160deg,${C.bgDeep},${C.bg})`,
       borderBottom: `1.5px solid ${C.border}`,
+      width: '100%',
+      boxSizing: 'border-box',
     },
     title: {
       fontFamily: "'Playfair Display',serif",
@@ -1496,6 +1538,8 @@ Réponds UNIQUEMENT en JSON valide :
       position: 'sticky',
       top: 0,
       zIndex: 10,
+      width: '100%',
+      boxSizing: 'border-box',
     },
     tab: (a) => ({
       flex: 1,
@@ -1510,7 +1554,7 @@ Réponds UNIQUEMENT en JSON valide :
       fontFamily: "'Lato',sans-serif",
       letterSpacing: '0.3px',
     }),
-    content: { padding: '14px 14px 90px' },
+    content: { padding: '14px 14px 90px', width: '100%', boxSizing: 'border-box' },
     urgentBar: {
       margin: '0 0 12px',
       padding: '10px 13px',
@@ -1700,7 +1744,6 @@ Réponds UNIQUEMENT en JSON valide :
               >
                 {showAddIng ? '✕ Annuler' : '+ Ajouter'}
               </Btn>
-
             </div>
 
             {showAddIng && (
@@ -2184,7 +2227,78 @@ Réponds UNIQUEMENT en JSON valide :
                                 color: C.textMid,
                               }}
                             >
-                              {item.texte_brut}
+                              {scanPhases.basse.map((item, idx) => (
+                                <div
+                                  key={idx}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '10px',
+                                    padding: '7px 0',
+                                    borderBottom: `1px solid ${C.border}`,
+                                  }}
+                                >
+                                  <div style={{ flex: 1 }}>
+                                    <span
+                                      style={{
+                                        fontSize: '12px',
+                                        fontFamily: 'monospace',
+                                        color: C.textMid,
+                                      }}
+                                    >
+                                      {item.texte_brut}
+                                    </span>
+                                    {item.prix && (
+                                      <span
+                                        style={{
+                                          fontSize: '11px',
+                                          color: C.green,
+                                          marginLeft: '8px',
+                                        }}
+                                      >
+                                        {item.prix}€
+                                      </span>
+                                    )}
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      setCurrentBarcodeTarget({ idx, phase: 'basse' })
+                                      setShowBarcodeScanner(true)
+                                    }}
+                                    style={{
+                                      fontSize: '11px',
+                                      padding: '5px 10px',
+                                      borderRadius: '10px',
+                                      background: `${C.terra}15`,
+                                      border: `1px solid ${C.terra}40`,
+                                      color: C.terra,
+                                      cursor: 'pointer',
+                                      whiteSpace: 'nowrap',
+                                      fontFamily: "'Lato',sans-serif",
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    📷 Scanner
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      setScanPhases((p) => ({
+                                        ...p,
+                                        basse: p.basse.filter((_, i) => i !== idx),
+                                      }))
+                                    }
+                                    style={{
+                                      background: 'none',
+                                      border: 'none',
+                                      color: C.border,
+                                      cursor: 'pointer',
+                                      fontSize: '16px',
+                                    }}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
                             </span>
                             {item.prix && (
                               <span style={{ fontSize: '11px', color: C.green, marginLeft: '8px' }}>
@@ -2588,6 +2702,12 @@ Réponds UNIQUEMENT en JSON valide :
             scanTicket(file)
           }}
           onClose={() => setShowTicketCamera(false)}
+        />
+      )}
+      {showBarcodeScanner && (
+        <BarcodeScanner
+          onResult={handleBarcodeResult}
+          onClose={() => setShowBarcodeScanner(false)}
         />
       )}
     </>
