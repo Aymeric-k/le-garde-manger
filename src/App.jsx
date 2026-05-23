@@ -177,6 +177,17 @@ function useStorage(key, init) {
   return [val, setVal]
 }
 
+function detectDoublons(newItems, existingItems) {
+  return newItems.map((item) => {
+    const doublon = existingItems.find(
+      (e) =>
+        e.texte_brut.toLowerCase().includes(item.texte_brut.toLowerCase().slice(0, 8)) ||
+        item.texte_brut.toLowerCase().includes(e.texte_brut.toLowerCase().slice(0, 8))
+    )
+    return { ...item, doublon: doublon || null }
+  })
+}
+
 // ─── Micro Components ──────────────────────────────────────────────────────
 function DlcBadge({ dlc }) {
   const d = getDaysLeft(dlc)
@@ -510,7 +521,8 @@ export default function App() {
     validated: [], // tous les articles confirmés
   })
   const [offLoading, setOffLoading] = useState(false) // Open Food Facts en cours
-  const [currentBarcodeTarget, setCurrentBarcodeTarget] = useState(null)
+  // TODO: scan code-barres — à implémenter avec @zxing/library
+  // const [currentBarcodeTarget, setCurrentBarcodeTarget] = useState(null)
   const [scanConfirm, setScanConfirm] = useState(null)
   const [fridgeSubTab, setFridgeSubTab] = useState('food')
   const [lastTicketItems, setLastTicketItems] = useState([]) // 3 derniers articles
@@ -711,8 +723,8 @@ export default function App() {
           }
         }
       }
-
-      setScanPhases({ haute, moyenne, basse })
+      const hauteDedup = detectDoublons(haute, lastTicketItems)
+      setScanPhases({ haute: hauteDedup, moyenne, basse })
       const derniersArticles = parsed.lignes?.slice(-3) || []
       setLastTicketItems(derniersArticles)
       setPhotoCount((p) => p + 1)
