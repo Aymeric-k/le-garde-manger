@@ -188,41 +188,7 @@ function detectDoublons(newItems, existingItems) {
     return { ...item, doublon: doublon || null }
   })
 }
-const handleBarcodeResult = async (barcode) => {
-  setShowBarcodeScanner(false)
-  if (!currentBarcodeTarget) return
 
-  const product = await getProductByBarcode(barcode)
-  if (!product) return
-
-  const { idx, phase } = currentBarcodeTarget
-
-  setScanPhases((p) => ({
-    ...p,
-    [phase]: p[phase].map((item, i) =>
-      i !== idx
-        ? item
-        : {
-            ...item,
-            candidats: [product],
-            selected_candidat: 0,
-            selected: true,
-          }
-    ),
-  }))
-
-  // Déplace de basse → moyenne si trouvé
-  if (phase === 'basse') {
-    setScanPhases((p) => {
-      const item = { ...p.basse[idx], candidats: [product], selected_candidat: 0, selected: true }
-      return {
-        ...p,
-        basse: p.basse.filter((_, i) => i !== idx),
-        moyenne: [...p.moyenne, item],
-      }
-    })
-  }
-}
 // ─── Micro Components ──────────────────────────────────────────────────────
 function DlcBadge({ dlc }) {
   const d = getDaysLeft(dlc)
@@ -563,6 +529,7 @@ export default function App() {
   const [fridgeSubTab, setFridgeSubTab] = useState('food')
   const [lastTicketItems, setLastTicketItems] = useState([]) // 3 derniers articles
   const [photoCount, setPhotoCount] = useState(0)
+  const [scanResult, setScanResult] = useState(null)
 
   // Adapt panel state
   const [adaptTarget, setAdaptTarget] = useState(null)
@@ -652,7 +619,41 @@ export default function App() {
     })
     setShowAddIng(false)
   }
+  const handleBarcodeResult = async (barcode) => {
+    setShowBarcodeScanner(false)
+    if (!currentBarcodeTarget) return
 
+    const product = await getProductByBarcode(barcode)
+    if (!product) return
+
+    const { idx, phase } = currentBarcodeTarget
+
+    setScanPhases((p) => ({
+      ...p,
+      [phase]: p[phase].map((item, i) =>
+        i !== idx
+          ? item
+          : {
+              ...item,
+              candidats: [product],
+              selected_candidat: 0,
+              selected: true,
+            }
+      ),
+    }))
+
+    // Déplace de basse → moyenne si trouvé
+    if (phase === 'basse') {
+      setScanPhases((p) => {
+        const item = { ...p.basse[idx], candidats: [product], selected_candidat: 0, selected: true }
+        return {
+          ...p,
+          basse: p.basse.filter((_, i) => i !== idx),
+          moyenne: [...p.moyenne, item],
+        }
+      })
+    }
+  }
   // ── Ticket scan
   const scanTicket = async (file) => {
     if (!file) return
@@ -2114,8 +2115,19 @@ Réponds UNIQUEMENT en JSON valide :
                           </div>
                           <div style={{ flex: 1 }}>
                             <span style={{ fontWeight: 600, fontSize: '13px', color: C.text }}>
-                              {item.texte_brut}
+                              {item.nom_resolu || item.texte_brut}
                             </span>
+                            {item.nom_resolu && item.nom_resolu !== item.texte_brut && (
+                              <div
+                                style={{
+                                  fontSize: '10px',
+                                  color: C.textLight,
+                                  fontFamily: 'monospace',
+                                }}
+                              >
+                                {item.nom_resolu || item.texte_brut}
+                              </div>
+                            )}
                             <span
                               style={{ fontSize: '11px', color: C.textLight, marginLeft: '8px' }}
                             >
@@ -2205,9 +2217,7 @@ Réponds UNIQUEMENT en JSON valide :
                   {/* ❓ Basse confiance */}
                   {scanPhases.basse.length > 0 && (
                     <div style={{ marginBottom: '14px' }}>
-                      <SectionLabel>
-                        ❓ Non reconnus — à ignorer ou corriger manuellement
-                      </SectionLabel>
+                      <SectionLabel>❓ Non reconnus</SectionLabel>
                       {scanPhases.basse.map((item, idx) => (
                         <div
                           key={idx}
@@ -2227,78 +2237,7 @@ Réponds UNIQUEMENT en JSON valide :
                                 color: C.textMid,
                               }}
                             >
-                              {scanPhases.basse.map((item, idx) => (
-                                <div
-                                  key={idx}
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '10px',
-                                    padding: '7px 0',
-                                    borderBottom: `1px solid ${C.border}`,
-                                  }}
-                                >
-                                  <div style={{ flex: 1 }}>
-                                    <span
-                                      style={{
-                                        fontSize: '12px',
-                                        fontFamily: 'monospace',
-                                        color: C.textMid,
-                                      }}
-                                    >
-                                      {item.texte_brut}
-                                    </span>
-                                    {item.prix && (
-                                      <span
-                                        style={{
-                                          fontSize: '11px',
-                                          color: C.green,
-                                          marginLeft: '8px',
-                                        }}
-                                      >
-                                        {item.prix}€
-                                      </span>
-                                    )}
-                                  </div>
-                                  <button
-                                    onClick={() => {
-                                      setCurrentBarcodeTarget({ idx, phase: 'basse' })
-                                      setShowBarcodeScanner(true)
-                                    }}
-                                    style={{
-                                      fontSize: '11px',
-                                      padding: '5px 10px',
-                                      borderRadius: '10px',
-                                      background: `${C.terra}15`,
-                                      border: `1px solid ${C.terra}40`,
-                                      color: C.terra,
-                                      cursor: 'pointer',
-                                      whiteSpace: 'nowrap',
-                                      fontFamily: "'Lato',sans-serif",
-                                      fontWeight: 700,
-                                    }}
-                                  >
-                                    📷 Scanner
-                                  </button>
-                                  <button
-                                    onClick={() =>
-                                      setScanPhases((p) => ({
-                                        ...p,
-                                        basse: p.basse.filter((_, i) => i !== idx),
-                                      }))
-                                    }
-                                    style={{
-                                      background: 'none',
-                                      border: 'none',
-                                      color: C.border,
-                                      cursor: 'pointer',
-                                      fontSize: '16px',
-                                    }}
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                              ))}
+                              {item.texte_brut}
                             </span>
                             {item.prix && (
                               <span style={{ fontSize: '11px', color: C.green, marginLeft: '8px' }}>
@@ -2306,6 +2245,24 @@ Réponds UNIQUEMENT en JSON valide :
                               </span>
                             )}
                           </div>
+                          <button
+                            onClick={() => {
+                              setCurrentBarcodeTarget({ idx, phase: 'basse' })
+                              setShowBarcodeScanner(true)
+                            }}
+                            style={{
+                              fontSize: '11px',
+                              padding: '5px 10px',
+                              borderRadius: '10px',
+                              background: `${C.terra}15`,
+                              border: `1px solid ${C.terra}40`,
+                              color: C.terra,
+                              cursor: 'pointer',
+                              fontWeight: 700,
+                            }}
+                          >
+                            📷 Scanner
+                          </button>
                           <button
                             onClick={() =>
                               setScanPhases((p) => ({
@@ -2343,7 +2300,9 @@ Réponds UNIQUEMENT en JSON valide :
                             ...scanPhases.moyenne.filter((i) => i.selected),
                           ].forEach((item) => {
                             const nom =
-                              item.candidats?.[item.selected_candidat]?.nom || item.texte_brut
+                              item.candidats?.[item.selected_candidat]?.nom ||
+                              item.nom_resolu ||
+                              item.texte_brut
                             if (item.type === 'alimentaire') {
                               setIngredients((p) => [
                                 ...p,
