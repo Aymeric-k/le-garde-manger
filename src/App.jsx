@@ -719,6 +719,7 @@ export default function App() {
         body: JSON.stringify({
           proxy_token: 'lgm_2024_xK9mP3',
           model: 'gpt-4o-mini',
+          temperature: 0,
           max_tokens: 4000,
           messages: [
             {
@@ -2114,9 +2115,30 @@ Réponds UNIQUEMENT en JSON valide :
                             )}
                           </div>
                           <div style={{ flex: 1 }}>
-                            <span style={{ fontWeight: 600, fontSize: '13px', color: C.text }}>
-                              {item.nom_resolu || item.texte_brut}
-                            </span>
+                            <input
+                              value={item.nom_resolu || item.texte_brut}
+                              onChange={(e) =>
+                                setScanPhases((p) => ({
+                                  ...p,
+                                  haute: p.haute.map((x, i) =>
+                                    i === idx ? { ...x, nom_resolu: e.target.value } : x
+                                  ),
+                                }))
+                              }
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                fontWeight: 600,
+                                fontSize: '13px',
+                                color: C.text,
+                                background: 'transparent',
+                                border: 'none',
+                                borderBottom: `1px dashed ${C.border}`,
+                                outline: 'none',
+                                width: '100%',
+                                fontFamily: "'Lato',sans-serif",
+                                padding: '2px 0',
+                              }}
+                            />
                             {item.nom_resolu && item.nom_resolu !== item.texte_brut && (
                               <div
                                 style={{
