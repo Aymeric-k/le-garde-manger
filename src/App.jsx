@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 import TicketCamera from './components/TicketCamera'
 import { searchProduct, getProductByBarcode } from './services/openFoodFacts'
 
-import BarcodeScanner from './components/BarcodeScanner'
 // ─── Palette & Design Tokens ───────────────────────────────────────────────
 const C = {
   bg: '#f5f0e8', // parchemin chaud
@@ -525,11 +524,11 @@ export default function App() {
   // TODO: scan code-barres — à implémenter avec @zxing/library
   const [currentBarcodeTarget, setCurrentBarcodeTarget] = useState(null)
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
+  const [showFrigoBarcode, setShowFrigoBarcode] = useState(false)
   const [scanConfirm, setScanConfirm] = useState(null)
   const [fridgeSubTab, setFridgeSubTab] = useState('food')
   const [lastTicketItems, setLastTicketItems] = useState([]) // 3 derniers articles
   const [photoCount, setPhotoCount] = useState(0)
-  const [scanResult, setScanResult] = useState(null)
 
   // Adapt panel state
   const [adaptTarget, setAdaptTarget] = useState(null)
@@ -619,41 +618,37 @@ export default function App() {
     })
     setShowAddIng(false)
   }
+
   const handleBarcodeResult = async (barcode) => {
     setShowBarcodeScanner(false)
     if (!currentBarcodeTarget) return
-
     const product = await getProductByBarcode(barcode)
     if (!product) return
-
-    const { idx, phase } = currentBarcodeTarget
-
-    setScanPhases((p) => ({
-      ...p,
-      [phase]: p[phase].map((item, i) =>
-        i !== idx
-          ? item
-          : {
-              ...item,
-              candidats: [product],
-              selected_candidat: 0,
-              selected: true,
-            }
-      ),
-    }))
-
-    // Déplace de basse → moyenne si trouvé
-    if (phase === 'basse') {
-      setScanPhases((p) => {
-        const item = { ...p.basse[idx], candidats: [product], selected_candidat: 0, selected: true }
-        return {
-          ...p,
-          basse: p.basse.filter((_, i) => i !== idx),
-          moyenne: [...p.moyenne, item],
-        }
-      })
-    }
+    const { idx } = currentBarcodeTarget
+    setScanPhases((p) => {
+      const item = { ...p.basse[idx], candidats: [product], selected_candidat: 0, selected: true }
+      return { ...p, basse: p.basse.filter((_, i) => i !== idx), moyenne: [...p.moyenne, item] }
+    })
   }
+
+  const handleFrigoBarcodeResult = async (barcode) => {
+    setShowFrigoBarcode(false)
+    const product = await getProductByBarcode(barcode)
+    if (!product) return
+    setIngredients((p) => [
+      ...p,
+      {
+        id: Date.now() + Math.random(),
+        name: product.nom,
+        quantity: product.poids?.replace(/[^\d.]/g, '') || '1',
+        unit: product.poids?.match(/[a-zA-Z]+/)?.[0]?.toLowerCase() || 'pièce(s)',
+        category: 'Autre',
+        dlc: '',
+        storage: 'garde_manger',
+      },
+    ])
+  }
+
   // ── Ticket scan
   const scanTicket = async (file) => {
     if (!file) return
@@ -719,7 +714,6 @@ export default function App() {
         body: JSON.stringify({
           proxy_token: 'lgm_2024_xK9mP3',
           model: 'gpt-4o-mini',
-          temperature: 0,
           max_tokens: 4000,
           messages: [
             {
@@ -1511,19 +1505,13 @@ Réponds UNIQUEMENT en JSON valide :
       background: C.bg,
       color: C.text,
       fontFamily: "'Lato',sans-serif",
-      width: '100%',
       maxWidth: '430px',
       margin: '0 auto',
-      flexShrink: 0,
-      boxSizing: 'border-box',
-      textAlign: 'left',
     },
     header: {
       padding: '20px 18px 14px',
       background: `linear-gradient(160deg,${C.bgDeep},${C.bg})`,
       borderBottom: `1.5px solid ${C.border}`,
-      width: '100%',
-      boxSizing: 'border-box',
     },
     title: {
       fontFamily: "'Playfair Display',serif",
@@ -1540,8 +1528,6 @@ Réponds UNIQUEMENT en JSON valide :
       position: 'sticky',
       top: 0,
       zIndex: 10,
-      width: '100%',
-      boxSizing: 'border-box',
     },
     tab: (a) => ({
       flex: 1,
@@ -1556,7 +1542,7 @@ Réponds UNIQUEMENT en JSON valide :
       fontFamily: "'Lato',sans-serif",
       letterSpacing: '0.3px',
     }),
-    content: { padding: '14px 14px 90px', width: '100%', boxSizing: 'border-box' },
+    content: { padding: '14px 14px 90px' },
     urgentBar: {
       margin: '0 0 12px',
       padding: '10px 13px',
@@ -1668,7 +1654,7 @@ Réponds UNIQUEMENT en JSON valide :
           ))}
         </div>
 
-        {/* Scan ticket + Analyser recette */}
+        {/* Scan ticket */}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
           <button
             onClick={() => setShowTicketCamera(true)}
@@ -1690,10 +1676,13 @@ Réponds UNIQUEMENT en JSON valide :
           >
             <span style={{ fontSize: '22px' }}>🧾</span>
             <span style={{ fontSize: '12px', fontWeight: 700, color: C.green }}>
-              Ticket de caisse
+              Scanner un ticket
             </span>
           </button>
-          <label
+          <button
+            onClick={() => {
+              setShowFrigoBarcode(true)
+            }}
             style={{
               flex: 1,
               display: 'flex',
@@ -1703,25 +1692,18 @@ Réponds UNIQUEMENT en JSON valide :
               gap: '4px',
               padding: '14px 8px',
               borderRadius: '14px',
-              background: `linear-gradient(135deg,${C.terra}20,${C.terra}0a)`,
-              border: `2px solid ${C.terra}70`,
+              background: `linear-gradient(135deg,${C.brown}20,${C.brown}0a)`,
+              border: `2px solid ${C.brown}70`,
               cursor: 'pointer',
               fontFamily: "'Lato',sans-serif",
               WebkitTapHighlightColor: 'transparent',
             }}
           >
-            <span style={{ fontSize: '22px' }}>📖</span>
-            <span style={{ fontSize: '12px', fontWeight: 700, color: C.terra }}>Recette livre</span>
-            <input
-              type='file'
-              accept='image/*'
-              style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
-              onChange={(e) => {
-                if (e.target.files?.[0]) analyzeRecipePhoto(e.target.files[0])
-                e.target.value = ''
-              }}
-            />
-          </label>
+            <span style={{ fontSize: '22px' }}>📦</span>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: C.brown }}>
+              Scanner un produit
+            </span>
+          </button>
         </div>
 
         {fridgeSubTab === 'food' ? (
@@ -2115,41 +2097,9 @@ Réponds UNIQUEMENT en JSON valide :
                             )}
                           </div>
                           <div style={{ flex: 1 }}>
-                            <input
-                              value={item.nom_resolu || item.texte_brut}
-                              onChange={(e) =>
-                                setScanPhases((p) => ({
-                                  ...p,
-                                  haute: p.haute.map((x, i) =>
-                                    i === idx ? { ...x, nom_resolu: e.target.value } : x
-                                  ),
-                                }))
-                              }
-                              onClick={(e) => e.stopPropagation()}
-                              style={{
-                                fontWeight: 600,
-                                fontSize: '13px',
-                                color: C.text,
-                                background: 'transparent',
-                                border: 'none',
-                                borderBottom: `1px dashed ${C.border}`,
-                                outline: 'none',
-                                width: '100%',
-                                fontFamily: "'Lato',sans-serif",
-                                padding: '2px 0',
-                              }}
-                            />
-                            {item.nom_resolu && item.nom_resolu !== item.texte_brut && (
-                              <div
-                                style={{
-                                  fontSize: '10px',
-                                  color: C.textLight,
-                                  fontFamily: 'monospace',
-                                }}
-                              >
-                                {item.nom_resolu || item.texte_brut}
-                              </div>
-                            )}
+                            <span style={{ fontWeight: 600, fontSize: '13px', color: C.text }}>
+                              {item.texte_brut}
+                            </span>
                             <span
                               style={{ fontSize: '11px', color: C.textLight, marginLeft: '8px' }}
                             >
@@ -2239,7 +2189,9 @@ Réponds UNIQUEMENT en JSON valide :
                   {/* ❓ Basse confiance */}
                   {scanPhases.basse.length > 0 && (
                     <div style={{ marginBottom: '14px' }}>
-                      <SectionLabel>❓ Non reconnus</SectionLabel>
+                      <SectionLabel>
+                        ❓ Non reconnus — à ignorer ou corriger manuellement
+                      </SectionLabel>
                       {scanPhases.basse.map((item, idx) => (
                         <div
                           key={idx}
@@ -2267,24 +2219,6 @@ Réponds UNIQUEMENT en JSON valide :
                               </span>
                             )}
                           </div>
-                          <button
-                            onClick={() => {
-                              setCurrentBarcodeTarget({ idx, phase: 'basse' })
-                              setShowBarcodeScanner(true)
-                            }}
-                            style={{
-                              fontSize: '11px',
-                              padding: '5px 10px',
-                              borderRadius: '10px',
-                              background: `${C.terra}15`,
-                              border: `1px solid ${C.terra}40`,
-                              color: C.terra,
-                              cursor: 'pointer',
-                              fontWeight: 700,
-                            }}
-                          >
-                            📷 Scanner
-                          </button>
                           <button
                             onClick={() =>
                               setScanPhases((p) => ({
@@ -2322,9 +2256,7 @@ Réponds UNIQUEMENT en JSON valide :
                             ...scanPhases.moyenne.filter((i) => i.selected),
                           ].forEach((item) => {
                             const nom =
-                              item.candidats?.[item.selected_candidat]?.nom ||
-                              item.nom_resolu ||
-                              item.texte_brut
+                              item.candidats?.[item.selected_candidat]?.nom || item.texte_brut
                             if (item.type === 'alimentaire') {
                               setIngredients((p) => [
                                 ...p,
@@ -2683,6 +2615,12 @@ Réponds UNIQUEMENT en JSON valide :
             scanTicket(file)
           }}
           onClose={() => setShowTicketCamera(false)}
+        />
+      )}
+      {showFrigoBarcode && (
+        <BarcodeScanner
+          onResult={handleFrigoBarcodeResult}
+          onClose={() => setShowFrigoBarcode(false)}
         />
       )}
       {showBarcodeScanner && (
@@ -3516,6 +3454,42 @@ Réponds UNIQUEMENT en JSON valide :
           <span style={{ fontSize: '11px', color: C.green, fontWeight: 600 }}>
             🌱 {getSeason().label} — {getSeason().hint}
           </span>
+        </div>
+      </Card>
+
+      {/* Analyser une recette */}
+      <Card>
+        <SectionLabel>Analyser une recette</SectionLabel>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <label
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '12px 8px',
+              borderRadius: '14px',
+              background: `linear-gradient(135deg,${C.terra}20,${C.terra}0a)`,
+              border: `2px solid ${C.terra}70`,
+              cursor: 'pointer',
+              fontFamily: "'Lato',sans-serif",
+            }}
+          >
+            <span style={{ fontSize: '20px' }}>📖</span>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: C.terra }}>
+              Photo / Screenshot
+            </span>
+            <input
+              type='file'
+              accept='image/*'
+              style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
+              onChange={(e) => {
+                if (e.target.files?.[0]) analyzeRecipePhoto(e.target.files[0])
+                e.target.value = ''
+              }}
+            />
+          </label>
         </div>
       </Card>
 
