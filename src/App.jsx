@@ -2300,313 +2300,6 @@ Réponds UNIQUEMENT en JSON valide :
             </div>
           </div>
         )}
-        {showRecipeAnalysis && (
-          <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: '#3a2a1a88',
-              zIndex: 100,
-              display: 'flex',
-              alignItems: 'flex-end',
-            }}
-          >
-            <div
-              style={{
-                background: C.bgCard,
-                borderRadius: '24px 24px 0 0',
-                padding: '20px',
-                width: '100%',
-                maxWidth: '430px',
-                margin: '0 auto',
-                maxHeight: '88vh',
-                overflowY: 'auto',
-                boxShadow: `0 -8px 32px ${C.brown}30`,
-              }}
-            >
-              {recipeAnalysisLoading ? (
-                <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                  <div style={{ fontSize: '32px', marginBottom: '12px' }}>📖</div>
-                  <div
-                    style={{
-                      fontFamily: "'Playfair Display',serif",
-                      fontSize: '16px',
-                      color: C.brown,
-                      marginBottom: '6px',
-                    }}
-                  >
-                    Lecture de la recette...
-                  </div>
-                  <div style={{ fontSize: '12px', color: C.textLight }}>
-                    Croisement avec ton inventaire en cours
-                  </div>
-                </div>
-              ) : recipeAnalysisResult?.error ? (
-                <div style={{ textAlign: 'center', padding: '32px 0' }}>
-                  <div style={{ fontSize: '30px', marginBottom: '8px' }}>❌</div>
-                  <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
-                    Impossible de lire cette recette. Essaie avec une photo plus nette.
-                  </div>
-                  <Btn
-                    variant='outline'
-                    onClick={() => {
-                      setShowRecipeAnalysis(false)
-                      setRecipeAnalysisResult(null)
-                    }}
-                  >
-                    Fermer
-                  </Btn>
-                </div>
-              ) : (
-                recipeAnalysisResult && (
-                  <>
-                    <div
-                      style={{
-                        fontFamily: "'Playfair Display',serif",
-                        fontSize: '18px',
-                        fontWeight: 700,
-                        color: C.brown,
-                        marginBottom: '2px',
-                      }}
-                    >
-                      📖 {recipeAnalysisResult.nom_recette}
-                    </div>
-                    <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '16px' }}>
-                      {recipeAnalysisResult.portions_recette} portions ·{' '}
-                      {recipeAnalysisResult.ingredients?.length} ingrédients analysés
-                    </div>
-
-                    {/* Stats rapides */}
-                    <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                      {[
-                        {
-                          label: "✅ J'ai",
-                          count: recipeAnalysisResult.ingredients?.filter(
-                            (i) => i.statut === 'disponible'
-                          ).length,
-                          color: C.green,
-                        },
-                        {
-                          label: '🔄 Substitut',
-                          count: recipeAnalysisResult.ingredients?.filter(
-                            (i) => i.statut === 'substituable'
-                          ).length,
-                          color: '#d4a017',
-                        },
-                        {
-                          label: '🛒 Manque',
-                          count: recipeAnalysisResult.ingredients?.filter(
-                            (i) => i.statut === 'manquant'
-                          ).length,
-                          color: C.terra,
-                        },
-                      ].map((s) => (
-                        <div
-                          key={s.label}
-                          style={{
-                            flex: 1,
-                            textAlign: 'center',
-                            padding: '8px 4px',
-                            borderRadius: '10px',
-                            background: s.color + '15',
-                            border: `1px solid ${s.color}30`,
-                          }}
-                        >
-                          <div style={{ fontSize: '18px', fontWeight: 800, color: s.color }}>
-                            {s.count}
-                          </div>
-                          <div style={{ fontSize: '9px', color: s.color, fontWeight: 600 }}>
-                            {s.label}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Ingrédients par statut */}
-                    {['disponible', 'substituable', 'manquant'].map((statut) => {
-                      const items =
-                        recipeAnalysisResult.ingredients?.filter((i) => i.statut === statut) || []
-                      if (!items.length) return null
-                      const cfg = {
-                        disponible: { icon: '✅', color: C.green, label: 'Dans ton frigo' },
-                        substituable: { icon: '🔄', color: '#d4a017', label: 'Substituable' },
-                        manquant: { icon: '🛒', color: C.terra, label: 'À acheter' },
-                      }[statut]
-                      return (
-                        <div key={statut} style={{ marginBottom: '14px' }}>
-                          <div
-                            style={{
-                              fontSize: '10px',
-                              fontWeight: 700,
-                              color: cfg.color,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.8px',
-                              marginBottom: '8px',
-                            }}
-                          >
-                            {cfg.icon} {cfg.label}
-                          </div>
-                          {items.map((ing, i) => (
-                            <div
-                              key={i}
-                              style={{
-                                padding: '8px 10px',
-                                borderRadius: '10px',
-                                background: cfg.color + '0d',
-                                border: `1px solid ${cfg.color}25`,
-                                marginBottom: '6px',
-                              }}
-                            >
-                              <div
-                                style={{
-                                  display: 'flex',
-                                  justifyContent: 'space-between',
-                                  alignItems: 'flex-start',
-                                }}
-                              >
-                                <div style={{ flex: 1 }}>
-                                  <span
-                                    style={{ fontWeight: 700, fontSize: '13px', color: C.text }}
-                                  >
-                                    {ing.nom}
-                                  </span>
-                                  <div
-                                    style={{
-                                      display: 'flex',
-                                      gap: '6px',
-                                      alignItems: 'center',
-                                      marginTop: '2px',
-                                      flexWrap: 'wrap',
-                                    }}
-                                  >
-                                    {/* Quantité recette */}
-                                    <span style={{ fontSize: '11px', color: C.textMid }}>
-                                      Recette : {ing.quantite_recette || ing.quantite} {ing.unite}
-                                    </span>
-                                    {/* Quantité gonflée si différente */}
-                                    {ing.quantite_course &&
-                                      ing.quantite_course !== ing.quantite_recette && (
-                                        <span
-                                          style={{
-                                            fontSize: '11px',
-                                            fontWeight: 700,
-                                            color: C.terra,
-                                            background: `${C.terra}15`,
-                                            padding: '1px 6px',
-                                            borderRadius: '8px',
-                                          }}
-                                        >
-                                          → À acheter : {ing.quantite_course} {ing.unite}
-                                        </span>
-                                      )}
-                                  </div>
-                                  {ing.note_quantite && (
-                                    <div
-                                      style={{
-                                        fontSize: '10px',
-                                        color: C.terra,
-                                        marginTop: '2px',
-                                        fontStyle: 'italic',
-                                      }}
-                                    >
-                                      💡 {ing.note_quantite}
-                                    </div>
-                                  )}
-                                  {ing.substitut && (
-                                    <div
-                                      style={{
-                                        fontSize: '11px',
-                                        color: '#d4a017',
-                                        marginTop: '2px',
-                                      }}
-                                    >
-                                      → Utilise : {ing.substitut}
-                                    </div>
-                                  )}
-                                  {ing.note && (
-                                    <div
-                                      style={{
-                                        fontSize: '11px',
-                                        color: C.textLight,
-                                        marginTop: '2px',
-                                        fontStyle: 'italic',
-                                      }}
-                                    >
-                                      {ing.note}
-                                    </div>
-                                  )}
-                                </div>
-                                {/* Bouton + pour ajouter à la liste */}
-                                {statut === 'manquant' && (
-                                  <button
-                                    onClick={() => addSingleToShoppingList(ing)}
-                                    style={{
-                                      background: C.terra,
-                                      border: 'none',
-                                      borderRadius: '8px',
-                                      color: '#fff',
-                                      fontWeight: 700,
-                                      fontSize: '16px',
-                                      width: '28px',
-                                      height: '28px',
-                                      cursor: 'pointer',
-                                      flexShrink: 0,
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      marginLeft: '8px',
-                                    }}
-                                  >
-                                    +
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )
-                    })}
-
-                    {recipeAnalysisResult.conseil_chef && (
-                      <div
-                        style={{
-                          padding: '10px 12px',
-                          background: `${C.green}10`,
-                          borderRadius: '10px',
-                          border: `1px solid ${C.green}30`,
-                          marginBottom: '16px',
-                        }}
-                      >
-                        <span style={{ fontSize: '12px', color: C.green }}>
-                          💡 {recipeAnalysisResult.conseil_chef}
-                        </span>
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <Btn
-                        variant='outline'
-                        onClick={() => {
-                          setShowRecipeAnalysis(false)
-                          setRecipeAnalysisResult(null)
-                        }}
-                      >
-                        Fermer
-                      </Btn>
-                      {recipeAnalysisResult.ingredients?.some((i) => i.statut === 'manquant') && (
-                        <div style={{ flex: 1 }}>
-                          <Btn variant='green' onClick={addMissingToShoppingList}>
-                            🛒 Ajouter aux courses
-                          </Btn>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )
-              )}
-            </div>
-          </div>
-        )}
       </div>
       {showTicketCamera && (
         <TicketCamera
@@ -3874,6 +3567,314 @@ Réponds UNIQUEMENT en JSON valide :
         })}
     </div>
   )
+
+  {
+    showRecipeAnalysis && (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: '#3a2a1a88',
+          zIndex: 100,
+          display: 'flex',
+          alignItems: 'flex-end',
+        }}
+      >
+        <div
+          style={{
+            background: C.bgCard,
+            borderRadius: '24px 24px 0 0',
+            padding: '20px',
+            width: '100%',
+            maxWidth: '430px',
+            margin: '0 auto',
+            maxHeight: '88vh',
+            overflowY: 'auto',
+            boxShadow: `0 -8px 32px ${C.brown}30`,
+          }}
+        >
+          {recipeAnalysisLoading ? (
+            <div style={{ textAlign: 'center', padding: '40px 0' }}>
+              <div style={{ fontSize: '32px', marginBottom: '12px' }}>📖</div>
+              <div
+                style={{
+                  fontFamily: "'Playfair Display',serif",
+                  fontSize: '16px',
+                  color: C.brown,
+                  marginBottom: '6px',
+                }}
+              >
+                Lecture de la recette...
+              </div>
+              <div style={{ fontSize: '12px', color: C.textLight }}>
+                Croisement avec ton inventaire en cours
+              </div>
+            </div>
+          ) : recipeAnalysisResult?.error ? (
+            <div style={{ textAlign: 'center', padding: '32px 0' }}>
+              <div style={{ fontSize: '30px', marginBottom: '8px' }}>❌</div>
+              <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
+                Impossible de lire cette recette. Essaie avec une photo plus nette.
+              </div>
+              <Btn
+                variant='outline'
+                onClick={() => {
+                  setShowRecipeAnalysis(false)
+                  setRecipeAnalysisResult(null)
+                }}
+              >
+                Fermer
+              </Btn>
+            </div>
+          ) : (
+            recipeAnalysisResult && (
+              <>
+                <div
+                  style={{
+                    fontFamily: "'Playfair Display',serif",
+                    fontSize: '18px',
+                    fontWeight: 700,
+                    color: C.brown,
+                    marginBottom: '2px',
+                  }}
+                >
+                  📖 {recipeAnalysisResult.nom_recette}
+                </div>
+                <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '16px' }}>
+                  {recipeAnalysisResult.portions_recette} portions ·{' '}
+                  {recipeAnalysisResult.ingredients?.length} ingrédients analysés
+                </div>
+
+                {/* Stats rapides */}
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                  {[
+                    {
+                      label: "✅ J'ai",
+                      count: recipeAnalysisResult.ingredients?.filter(
+                        (i) => i.statut === 'disponible'
+                      ).length,
+                      color: C.green,
+                    },
+                    {
+                      label: '🔄 Substitut',
+                      count: recipeAnalysisResult.ingredients?.filter(
+                        (i) => i.statut === 'substituable'
+                      ).length,
+                      color: '#d4a017',
+                    },
+                    {
+                      label: '🛒 Manque',
+                      count: recipeAnalysisResult.ingredients?.filter(
+                        (i) => i.statut === 'manquant'
+                      ).length,
+                      color: C.terra,
+                    },
+                  ].map((s) => (
+                    <div
+                      key={s.label}
+                      style={{
+                        flex: 1,
+                        textAlign: 'center',
+                        padding: '8px 4px',
+                        borderRadius: '10px',
+                        background: s.color + '15',
+                        border: `1px solid ${s.color}30`,
+                      }}
+                    >
+                      <div style={{ fontSize: '18px', fontWeight: 800, color: s.color }}>
+                        {s.count}
+                      </div>
+                      <div style={{ fontSize: '9px', color: s.color, fontWeight: 600 }}>
+                        {s.label}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Ingrédients par statut */}
+                {['disponible', 'substituable', 'manquant'].map((statut) => {
+                  const items =
+                    recipeAnalysisResult.ingredients?.filter((i) => i.statut === statut) || []
+                  if (!items.length) return null
+                  const cfg = {
+                    disponible: { icon: '✅', color: C.green, label: 'Dans ton frigo' },
+                    substituable: { icon: '🔄', color: '#d4a017', label: 'Substituable' },
+                    manquant: { icon: '🛒', color: C.terra, label: 'À acheter' },
+                  }[statut]
+                  return (
+                    <div key={statut} style={{ marginBottom: '14px' }}>
+                      <div
+                        style={{
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          color: cfg.color,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.8px',
+                          marginBottom: '8px',
+                        }}
+                      >
+                        {cfg.icon} {cfg.label}
+                      </div>
+                      {items.map((ing, i) => (
+                        <div
+                          key={i}
+                          style={{
+                            padding: '8px 10px',
+                            borderRadius: '10px',
+                            background: cfg.color + '0d',
+                            border: `1px solid ${cfg.color}25`,
+                            marginBottom: '6px',
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-start',
+                            }}
+                          >
+                            <div style={{ flex: 1 }}>
+                              <span style={{ fontWeight: 700, fontSize: '13px', color: C.text }}>
+                                {ing.nom}
+                              </span>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  gap: '6px',
+                                  alignItems: 'center',
+                                  marginTop: '2px',
+                                  flexWrap: 'wrap',
+                                }}
+                              >
+                                {/* Quantité recette */}
+                                <span style={{ fontSize: '11px', color: C.textMid }}>
+                                  Recette : {ing.quantite_recette || ing.quantite} {ing.unite}
+                                </span>
+                                {/* Quantité gonflée si différente */}
+                                {ing.quantite_course &&
+                                  ing.quantite_course !== ing.quantite_recette && (
+                                    <span
+                                      style={{
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        color: C.terra,
+                                        background: `${C.terra}15`,
+                                        padding: '1px 6px',
+                                        borderRadius: '8px',
+                                      }}
+                                    >
+                                      → À acheter : {ing.quantite_course} {ing.unite}
+                                    </span>
+                                  )}
+                              </div>
+                              {ing.note_quantite && (
+                                <div
+                                  style={{
+                                    fontSize: '10px',
+                                    color: C.terra,
+                                    marginTop: '2px',
+                                    fontStyle: 'italic',
+                                  }}
+                                >
+                                  💡 {ing.note_quantite}
+                                </div>
+                              )}
+                              {ing.substitut && (
+                                <div
+                                  style={{
+                                    fontSize: '11px',
+                                    color: '#d4a017',
+                                    marginTop: '2px',
+                                  }}
+                                >
+                                  → Utilise : {ing.substitut}
+                                </div>
+                              )}
+                              {ing.note && (
+                                <div
+                                  style={{
+                                    fontSize: '11px',
+                                    color: C.textLight,
+                                    marginTop: '2px',
+                                    fontStyle: 'italic',
+                                  }}
+                                >
+                                  {ing.note}
+                                </div>
+                              )}
+                            </div>
+                            {/* Bouton + pour ajouter à la liste */}
+                            {statut === 'manquant' && (
+                              <button
+                                onClick={() => addSingleToShoppingList(ing)}
+                                style={{
+                                  background: C.terra,
+                                  border: 'none',
+                                  borderRadius: '8px',
+                                  color: '#fff',
+                                  fontWeight: 700,
+                                  fontSize: '16px',
+                                  width: '28px',
+                                  height: '28px',
+                                  cursor: 'pointer',
+                                  flexShrink: 0,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  marginLeft: '8px',
+                                }}
+                              >
+                                +
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })}
+
+                {recipeAnalysisResult.conseil_chef && (
+                  <div
+                    style={{
+                      padding: '10px 12px',
+                      background: `${C.green}10`,
+                      borderRadius: '10px',
+                      border: `1px solid ${C.green}30`,
+                      marginBottom: '16px',
+                    }}
+                  >
+                    <span style={{ fontSize: '12px', color: C.green }}>
+                      💡 {recipeAnalysisResult.conseil_chef}
+                    </span>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <Btn
+                    variant='outline'
+                    onClick={() => {
+                      setShowRecipeAnalysis(false)
+                      setRecipeAnalysisResult(null)
+                    }}
+                  >
+                    Fermer
+                  </Btn>
+                  {recipeAnalysisResult.ingredients?.some((i) => i.statut === 'manquant') && (
+                    <div style={{ flex: 1 }}>
+                      <Btn variant='green' onClick={addMissingToShoppingList}>
+                        🛒 Ajouter aux courses
+                      </Btn>
+                    </div>
+                  )}
+                </div>
+              </>
+            )
+          )}
+        </div>
+      </div>
+    )
+  }
 
   // ── Shopping Tab ───────────────────────────────────────────────
   const renderCourses = () => {
