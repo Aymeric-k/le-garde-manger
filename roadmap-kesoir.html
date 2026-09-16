@@ -1,0 +1,1100 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kësoir — Roadmap</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;1,400&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      *,
+      *::before,
+      *::after {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      :root {
+        --bg: #0a0e0a;
+        --surface: #111811;
+        --card: #1a2218;
+        --card-h: #1f2a1e;
+        --border: rgba(120, 180, 80, 0.08);
+        --glow: rgba(120, 180, 80, 0.25);
+        --green: #78b450;
+        --green-bg: rgba(120, 180, 80, 0.12);
+        --amber: #f59e0b;
+        --red: #ef4444;
+        --text: #e8f0e0;
+        --muted: #8a9e80;
+        --faint: #4a5e42;
+        --r-sm: 8px;
+        --r-md: 12px;
+        --r-lg: 20px;
+      }
+      html {
+        scroll-behavior: smooth;
+        -webkit-font-smoothing: antialiased;
+      }
+      body {
+        font-family: 'DM Sans', sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.6;
+        overflow-x: hidden;
+      }
+      body::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        opacity: 0.02;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+        background-size: 256px;
+      }
+      h1,
+      h2,
+      h3,
+      h4 {
+        font-family: 'Outfit', sans-serif;
+        line-height: 1.15;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .container {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 0 24px;
+        position: relative;
+        z-index: 1;
+      }
+      section {
+        padding: 80px 0;
+        position: relative;
+      }
+
+      /* NAV */
+      nav {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 100;
+        padding: 14px 0;
+        background: rgba(10, 14, 10, 0.85);
+        backdrop-filter: blur(20px);
+        border-bottom: 1px solid var(--border);
+      }
+      nav .container {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .nav-logo {
+        font-family: 'Outfit', sans-serif;
+        font-weight: 700;
+        font-size: 1.2rem;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .nav-logo-icon {
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #4a8a20, var(--green));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 15px;
+      }
+      .nav-back {
+        font-size: 0.85rem;
+        color: var(--muted);
+        padding: 7px 16px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        transition: all 0.2s;
+      }
+      .nav-back:hover {
+        color: var(--text);
+        border-color: var(--glow);
+      }
+
+      /* HERO */
+      .hero {
+        padding: 140px 0 80px;
+        text-align: center;
+      }
+      .hero::before {
+        content: '';
+        position: absolute;
+        top: -100px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 700px;
+        height: 500px;
+        background: radial-gradient(ellipse, rgba(120, 180, 80, 0.1) 0%, transparent 70%);
+        pointer-events: none;
+      }
+      .hero-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 14px;
+        border-radius: 100px;
+        background: var(--green-bg);
+        border: 1px solid rgba(120, 180, 80, 0.2);
+        color: var(--green);
+        font-size: 0.78rem;
+        font-weight: 600;
+        font-family: 'Outfit', sans-serif;
+        margin-bottom: 24px;
+      }
+      .hero-badge .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--green);
+        animation: pulse 2s infinite;
+      }
+      .hero h1 {
+        font-size: clamp(2.2rem, 5vw, 3.8rem);
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        margin-bottom: 16px;
+      }
+      .hero h1 span {
+        background: linear-gradient(135deg, var(--green), #a8e060);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+      .hero p {
+        font-size: 1.1rem;
+        color: var(--muted);
+        max-width: 520px;
+        margin: 0 auto 40px;
+      }
+      .stats-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 40px;
+        flex-wrap: wrap;
+      }
+      .stat {
+        text-align: center;
+      }
+      .stat-num {
+        font-family: 'Outfit', sans-serif;
+        font-size: 2rem;
+        font-weight: 800;
+        color: var(--green);
+      }
+      .stat-lbl {
+        font-size: 0.8rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+
+      /* STATUTS */
+      .status-bar {
+        background: var(--surface);
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+        padding: 20px 0;
+      }
+      .statuses {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 32px;
+        flex-wrap: wrap;
+      }
+      .status-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      .dot-live {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #22c55e;
+        animation: pulse 2s infinite;
+      }
+      .dot-wip {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--amber);
+      }
+      .dot-soon {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--green);
+        opacity: 0.6;
+      }
+      .dot-idea {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--faint);
+      }
+
+      /* SECTIONS */
+      .section-header {
+        margin-bottom: 48px;
+      }
+      .section-tag {
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 3px;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-bottom: 10px;
+      }
+      .section-header h2 {
+        font-size: clamp(1.6rem, 3vw, 2.2rem);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+
+      /* GRILLE */
+      .cards-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 16px;
+      }
+
+      /* CARTE */
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 24px;
+        position: relative;
+        overflow: hidden;
+        transition: all 0.25s ease;
+        cursor: pointer;
+      }
+      .card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, var(--green), transparent);
+        opacity: 0;
+        transition: 0.3s;
+      }
+      .card:hover {
+        border-color: var(--glow);
+        background: var(--card-h);
+        transform: translateY(-2px);
+      }
+      .card:hover::before {
+        opacity: 1;
+      }
+      .card.voted {
+        border-color: rgba(120, 180, 80, 0.35);
+      }
+
+      .card-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .card-icon {
+        font-size: 1.6rem;
+        line-height: 1;
+        flex-shrink: 0;
+      }
+      .card-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 10px;
+        border-radius: 100px;
+        font-size: 0.7rem;
+        font-weight: 700;
+        font-family: 'Outfit', sans-serif;
+        white-space: nowrap;
+      }
+      .badge-live {
+        background: rgba(34, 197, 94, 0.1);
+        color: #22c55e;
+        border: 1px solid rgba(34, 197, 94, 0.2);
+      }
+      .badge-wip {
+        background: rgba(245, 158, 11, 0.1);
+        color: var(--amber);
+        border: 1px solid rgba(245, 158, 11, 0.2);
+      }
+      .badge-soon {
+        background: var(--green-bg);
+        color: var(--green);
+        border: 1px solid rgba(120, 180, 80, 0.2);
+      }
+      .badge-idea {
+        background: rgba(74, 94, 66, 0.2);
+        color: var(--faint);
+        border: 1px solid rgba(74, 94, 66, 0.3);
+      }
+
+      .card h3 {
+        font-family: 'Outfit', sans-serif;
+        font-size: 1rem;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+      .card p {
+        font-size: 0.875rem;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .vote-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border);
+      }
+      .vote-btn {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 14px;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .vote-btn:hover,
+      .vote-btn.active {
+        background: var(--green-bg);
+        border-color: rgba(120, 180, 80, 0.4);
+        color: var(--green);
+      }
+      .vote-count {
+        font-family: 'Outfit', sans-serif;
+        font-size: 0.75rem;
+        color: var(--faint);
+      }
+
+      /* SECTION LIVE */
+      .live-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 12px;
+        margin-bottom: 40px;
+      }
+      .live-item {
+        background: var(--surface);
+        border: 1px solid rgba(34, 197, 94, 0.15);
+        border-radius: var(--r-sm);
+        padding: 16px 18px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .live-icon {
+        font-size: 1.4rem;
+        flex-shrink: 0;
+      }
+      .live-name {
+        font-size: 0.9rem;
+        font-weight: 600;
+        margin-bottom: 2px;
+      }
+      .live-desc {
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+
+      /* CATÉGORIE */
+      .cat-block {
+        margin-bottom: 60px;
+      }
+      .cat-title {
+        font-family: 'Outfit', sans-serif;
+        font-size: 1.1rem;
+        font-weight: 700;
+        margin-bottom: 20px;
+        color: var(--green);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .cat-title::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--border);
+      }
+
+      /* FOOTER */
+      footer {
+        border-top: 1px solid var(--border);
+        padding: 40px 0;
+        text-align: center;
+      }
+      footer p {
+        color: var(--faint);
+        font-size: 0.8rem;
+      }
+
+      /* ANIMATIONS */
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 0.5;
+          transform: scale(1.4);
+        }
+      }
+      @keyframes fadeUp {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .reveal {
+        opacity: 0;
+        transform: translateY(20px);
+        transition:
+          opacity 0.6s ease,
+          transform 0.6s ease;
+      }
+      .reveal.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <div class="container">
+        <div class="nav-logo">
+          <div class="nav-logo-icon">🧺</div>
+          Kësoir — Roadmap
+        </div>
+        <a href="https://kesoir.fr" class="nav-back">← Retour à l'app</a>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <div class="container">
+        <div class="hero-badge"><span class="dot"></span>Bêta active</div>
+        <h1>La <span>feuille de route</span><br />de Kësoir</h1>
+        <p>Vote pour les features qui t'intéressent. Tu construis l'app avec nous.</p>
+        <div class="stats-row">
+          <div class="stat">
+            <div class="stat-num" id="total-votes">0</div>
+            <div class="stat-lbl">Votes</div>
+          </div>
+          <div class="stat">
+            <div class="stat-num">25</div>
+            <div class="stat-lbl">Features planifiées</div>
+          </div>
+          <div class="stat">
+            <div class="stat-num">13</div>
+            <div class="stat-lbl">Déjà en prod</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="status-bar">
+      <div class="container">
+        <div class="statuses">
+          <div class="status-item"><span class="dot-live"></span> En prod</div>
+          <div class="status-item"><span class="dot-wip"></span> En cours</div>
+          <div class="status-item"><span class="dot-soon"></span> Bientôt</div>
+          <div class="status-item"><span class="dot-idea"></span> Idée / exploration</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EN PROD -->
+    <section id="live">
+      <div class="container reveal">
+        <div class="section-header">
+          <p class="section-tag">Disponible maintenant</p>
+          <h2>Déjà dans l'app ✅</h2>
+        </div>
+        <div class="live-grid">
+          <div class="live-item">
+            <div class="live-icon">📸</div>
+            <div>
+              <div class="live-name">Scan ticket de caisse</div>
+              <div class="live-desc">Google Document AI + cache local + Open Food Facts</div>
+            </div>
+          </div>
+          <div class="live-item">
+            <div class="live-icon">📦</div>
+            <div>
+              <div class="live-name">Inventaire frigo</div>
+              <div class="live-desc">Cuisine + Maison, avec dates de péremption</div>
+            </div>
+          </div>
+          <div class="live-item">
+            <div class="live-icon">🔍</div>
+            <div>
+              <div class="live-name">Scanner code-barres</div>
+              <div class="live-desc">
+                Reconnaissance produit + confirmation éditable + scan en rafale
+              </div>
+            </div>
+          </div>
+          <div class="live-item">
+            <div class="live-icon">👨‍🍳</div>
+            <div>
+              <div class="live-name">Génération de recettes IA</div>
+              <div class="live-desc">GPT-4o-mini contextualisé à ton inventaire</div>
+            </div>
+          </div>
+          <div class="live-item">
+            <div class="live-icon">🤝</div>
+            <div>
+              <div class="live-name">Tolérance d'ingrédients</div>
+              <div class="live-desc">Recettes avec 1, 2 ou 3 ingrédients manquants</div>
+            </div>
+          </div>
+          <div class="live-item">
+            <div class="live-icon">🍽️</div>
+            <div>
+              <div class="live-name">Modes de génération</div>
+              <div class="live-desc">Soirée, vide-frigo, budget, profils convives</div>
+            </div>
+          </div>
+          <div class="live-item">
+            <div class="live-icon">🛒</div>
+            <div>
+              <div class="live-name">Liste de courses</div>
+              <div class="live-desc">
+                Consolidée depuis les recettes, panier manuel, séparée alimentaire/maison
+              </div>
+            </div>
+          </div>
+          <div class="live-item">
+            <div class="live-icon">📖</div>
+            <div>
+              <div class="live-name">Carnet de recettes</div>
+              <div class="live-desc">Sauvegarde et adaptation de recettes en cours</div>
+            </div>
+          </div>
+          <div class="live-item">
+            <div class="live-icon">☁️</div>
+            <div>
+              <div class="live-name">Compte Google + synchro</div>
+              <div class="live-desc">
+                Firebase Auth + Firestore — inventaire accessible sur tous tes appareils
+              </div>
+            </div>
+          </div>
+          <div class="live-item">
+            <div class="live-icon">💶</div>
+            <div>
+              <div class="live-name">Historique de prix réel</div>
+              <div class="live-desc">
+                Médiane des derniers prix payés, alimente les estimations de courses
+              </div>
+            </div>
+          </div>
+          <div class="live-item">
+            <div class="live-icon">🧠</div>
+            <div>
+              <div class="live-name">Cache produit local</div>
+              <div class="live-desc">
+                Reconnaissance instantanée des produits déjà scannés, sans appel externe
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- COMING SOON -->
+    <section id="soon" style="border-top: 1px solid var(--border)">
+      <div class="container">
+        <div class="section-header reveal">
+          <p class="section-tag">Prochaines sorties</p>
+          <h2>En cours & bientôt</h2>
+        </div>
+
+        <div class="cat-block reveal">
+          <div class="cat-title">📦 Gestion de l'inventaire</div>
+          <div class="cards-grid">
+            <div class="card" data-id="dlc-alert">
+              <div class="card-head">
+                <div class="card-icon">⏰</div>
+                <span class="card-badge badge-wip">En cours</span>
+              </div>
+              <h3>Alertes DLC courtes</h3>
+              <p>
+                Notification quand un produit expire bientôt. "3 œufs expirent dans 2 jours — on
+                fait une omelette ?"
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="ingredient-spotlight">
+              <div class="card-head">
+                <div class="card-icon">🌟</div>
+                <span class="card-badge badge-soon">Bientôt</span>
+              </div>
+              <h3>Ingrédient à mettre en avant</h3>
+              <p>
+                Sélectionne un ingrédient que tu veux utiliser en priorité — l'IA génère des
+                recettes centrées dessus.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="tri-dlc">
+              <div class="card-head">
+                <div class="card-icon">📅</div>
+                <span class="card-badge badge-soon">Bientôt</span>
+              </div>
+              <h3>Tri par date de péremption</h3>
+              <p>Vue de l'inventaire triée par DLC la plus proche. Anti-gaspi par défaut.</p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cat-block reveal">
+          <div class="cat-title">🍳 Recettes & cuisine</div>
+          <div class="cards-grid">
+            <div class="card" data-id="favoris">
+              <div class="card-head">
+                <div class="card-icon">❤️</div>
+                <span class="card-badge badge-wip">En cours</span>
+              </div>
+              <h3>Livre de recettes personnalisé</h3>
+              <p>
+                Ajoute des recettes en favori pour constituer ton propre carnet de cuisine.
+                Retrouve-les en un clic.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="filtres-diets">
+              <div class="card-head">
+                <div class="card-icon">🥗</div>
+                <span class="card-badge badge-soon">Bientôt</span>
+              </div>
+              <h3>Filtres régimes alimentaires</h3>
+              <p>
+                Végétarien, sans gluten, sans lactose, pauvre en calories. Les recettes s'adaptent à
+                tes contraintes.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="filtres-avances">
+              <div class="card-head">
+                <div class="card-icon">🎛️</div>
+                <span class="card-badge badge-soon">Bientôt</span>
+              </div>
+              <h3>Filtres avancés de recettes</h3>
+              <p>
+                Filtre par temps de cuisson, difficulté, type de plat (entrée / plat / dessert),
+                catégorie cuisine.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="matos">
+              <div class="card-head">
+                <div class="card-icon">🤖</div>
+                <span class="card-badge badge-soon">Bientôt</span>
+              </div>
+              <h3>Profil matériel de cuisine</h3>
+              <p>
+                Déclare ton airfryer, ta machine à pain, ton robot. Kësoir priorise les recettes qui
+                les utilisent.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cat-block reveal">
+          <div class="cat-title">🛒 Liste de courses</div>
+          <div class="cards-grid">
+            <div class="card" data-id="ajout-auto-courses">
+              <div class="card-head">
+                <div class="card-icon">➕</div>
+                <span class="card-badge badge-soon">Bientôt</span>
+              </div>
+              <h3>Ajout automatique des ingrédients manquants</h3>
+              <p>
+                "J'ai envie de faire cette recette" → pop-up "8 ingrédients ajoutés à ta liste de
+                courses".
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="multi-listes">
+              <div class="card-head">
+                <div class="card-icon">📋</div>
+                <span class="card-badge badge-soon">Bientôt</span>
+              </div>
+              <h3>Plusieurs listes de courses</h3>
+              <p>
+                Une liste par magasin, par occasion ou par semaine. Organise tes courses comme tu
+                veux.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- EXPLORATION -->
+    <section id="ideas" style="border-top: 1px solid var(--border)">
+      <div class="container">
+        <div class="section-header reveal">
+          <p class="section-tag">Vision long terme</p>
+          <h2>Idées à explorer 🔭</h2>
+        </div>
+
+        <div class="cat-block reveal">
+          <div class="cat-title">📊 Budget & anti-gaspi</div>
+          <div class="cards-grid">
+            <div class="card" data-id="budget-courses">
+              <div class="card-head">
+                <div class="card-icon">💰</div>
+                <span class="card-badge badge-idea">Exploration</span>
+              </div>
+              <h3>Budget courses mensuel</h3>
+              <p>
+                Définis un budget max. Alerte si l'ajout d'une recette au panier dépasse l'enveloppe
+                du mois.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="gamification">
+              <div class="card-head">
+                <div class="card-icon">🏆</div>
+                <span class="card-badge badge-idea">Exploration</span>
+              </div>
+              <h3>Gamification anti-gaspi</h3>
+              <p>
+                Points gagnés quand tu cuisines avec des produits proches de la péremption. Défis
+                hebdomadaires "vide-frigo".
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cat-block reveal">
+          <div class="cat-title">👨‍👩‍👧 Social & partage</div>
+          <div class="cards-grid">
+            <div class="card" data-id="multi-user">
+              <div class="card-head">
+                <div class="card-icon">👨‍👩‍👧</div>
+                <span class="card-badge badge-idea">Exploration</span>
+              </div>
+              <h3>Mode famille / coloc</h3>
+              <p>
+                Partage ton inventaire et ta liste de courses avec les membres de ton foyer. Tout le
+                monde voit ce qu'il y a à la maison.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="partage-recette">
+              <div class="card-head">
+                <div class="card-icon">📤</div>
+                <span class="card-badge badge-idea">Exploration</span>
+              </div>
+              <h3>Partage de recettes</h3>
+              <p>
+                Partage une recette générée avec un ami. Il peut l'importer directement dans son
+                Kësoir.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cat-block reveal">
+          <div class="cat-title">🧠 Intelligence & nutrition</div>
+          <div class="cards-grid">
+            <div class="card" data-id="menu-semaine">
+              <div class="card-head">
+                <div class="card-icon">📅</div>
+                <span class="card-badge badge-idea">Exploration</span>
+              </div>
+              <h3>Génération de menus sur plusieurs jours</h3>
+              <p>
+                Planifie ta semaine entière en un clic. L'IA optimise pour éviter le gaspillage et
+                équilibrer les repas.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="nutrition">
+              <div class="card-head">
+                <div class="card-icon">🥦</div>
+                <span class="card-badge badge-idea">Exploration</span>
+              </div>
+              <h3>Infos nutritionnelles</h3>
+              <p>
+                Calories, protéines, glucides par recette. Conseils pour équilibrer les repas de la
+                semaine.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="import-drive">
+              <div class="card-head">
+                <div class="card-icon">🚗</div>
+                <span class="card-badge badge-live">En prod ✅</span>
+              </div>
+              <h3>Import commande drive</h3>
+              <p>
+                Colle ta commande Carrefour / Leclerc / Intermarché et l'inventaire se met à jour
+                automatiquement.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="pwa">
+              <div class="card-head">
+                <div class="card-icon">📱</div>
+                <span class="card-badge badge-idea">Exploration</span>
+              </div>
+              <h3>App mobile (PWA améliorée)</h3>
+              <p>
+                Installe Kësoir sur ton téléphone comme une vraie app. Notifications de DLC, accès
+                hors-ligne à l'inventaire.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cat-block reveal">
+          <div class="cat-title">🎯 Défis culinaires</div>
+          <div class="cards-grid">
+            <div class="card" data-id="mode-defi">
+              <div class="card-head">
+                <div class="card-icon">🔥</div>
+                <span class="card-badge badge-idea">Exploration</span>
+              </div>
+              <h3>Mode Défi</h3>
+              <p>
+                Une recette technique du dimanche — plus longue, plus exigeante, mais ultra
+                satisfaisante. Pousse à sortir le robot, l'airfryer, la machine à pain.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="prepa-famille">
+              <div class="card-head">
+                <div class="card-icon">👨‍👩‍👧</div>
+                <span class="card-badge badge-idea">Exploration</span>
+              </div>
+              <h3>Préparation en famille</h3>
+              <p>
+                Recettes pensées pour cuisiner à plusieurs mains — étapes réparties, chacun son
+                rôle. Un moment à faire ensemble, pas juste un repas à produire.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+
+            <div class="card" data-id="petits-plats-grands">
+              <div class="card-head">
+                <div class="card-icon">🍽️</div>
+                <span class="card-badge badge-idea">Exploration</span>
+              </div>
+              <h3>Les petits plats dans les grands</h3>
+              <p>
+                Mode occasion spéciale — présentation soignée, dressage, petite touche qui
+                impressionne. Pour un anniversaire, une invitation, un date.
+              </p>
+              <div class="vote-row">
+                <button class="vote-btn" onclick="vote(this)">👍 Voter</button>
+                <span class="vote-count">0 vote</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="container">
+        <p>
+          Kësoir — Fait avec ❤️ en Lorraine ·
+          <a href="https://kesoir.fr" style="color: var(--green)">kesoir.fr</a>
+        </p>
+      </div>
+    </footer>
+
+    <script>
+      // ── Votes (localStorage) ──
+      const STORAGE_KEY = 'kesoir_votes'
+
+      function getVotes() {
+        try {
+          return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')
+        } catch {
+          return {}
+        }
+      }
+      function saveVotes(v) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(v))
+      }
+
+      function getCardId(btn) {
+        return btn.closest('.card').dataset.id
+      }
+
+      function updateTotalVotes() {
+        const v = getVotes()
+        const total = Object.values(v).reduce((a, b) => a + (b.count || 0), 0)
+        const el = document.getElementById('total-votes')
+        if (el) el.textContent = total
+      }
+
+      function renderVotes() {
+        const v = getVotes()
+        document.querySelectorAll('.card').forEach((card) => {
+          const id = card.dataset.id
+          const data = v[id] || { count: 0, voted: false }
+          const btn = card.querySelector('.vote-btn')
+          const count = card.querySelector('.vote-count')
+          if (btn) {
+            btn.classList.toggle('active', data.voted)
+            btn.textContent = data.voted ? '✅ Voté' : '👍 Voter'
+          }
+          if (count) count.textContent = data.count + (data.count > 1 ? ' votes' : ' vote')
+          if (data.voted) card.classList.add('voted')
+        })
+        updateTotalVotes()
+      }
+
+      function vote(btn) {
+        const card = btn.closest('.card')
+        const id = card.dataset.id
+        const v = getVotes()
+        if (!v[id]) v[id] = { count: 0, voted: false }
+        if (v[id].voted) {
+          v[id].count = Math.max(0, v[id].count - 1)
+          v[id].voted = false
+          card.classList.remove('voted')
+        } else {
+          v[id].count++
+          v[id].voted = true
+          card.classList.add('voted')
+        }
+        saveVotes(v)
+        renderVotes()
+      }
+
+      renderVotes()
+
+      // ── Scroll reveal ──
+      const io = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((e) => {
+            if (e.isIntersecting) e.target.classList.add('show')
+          })
+        },
+        { threshold: 0.1 }
+      )
+      document.querySelectorAll('.reveal').forEach((el) => io.observe(el))
+    </script>
+  </body>
+</html>

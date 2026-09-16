@@ -1,0 +1,102 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // ⚠️ Garde cette liste synchronisée avec ADMIN_UIDS dans App.jsx —
+    // c'est ICI que la protection réelle s'applique (le check côté
+    // client n'est qu'un confort d'UX, jamais une vraie sécurité).
+    function isAdmin() {
+      return isAuthenticated() &&
+        request.auth.uid in ['FH9xwVbW4lSzw4QH7pDqegkOQWt2'];
+    }
+
+    // ═══════════════════════════════════════════════════
+    // Toutes les données Kësoir sont strictement privées —
+    // pas de partage, pas de social, chaque utilisateur ne
+    // voit et ne modifie que ses propres données.
+    // ═══════════════════════════════════════════════════
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      match /ingredients/{ingredientId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /nonFood/{itemId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /equipment/{equipmentId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /shoppingLists/{listId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /manualCart/{itemId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /savedRecipes/{recipeId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /mealHistory/{entryId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /priceHistory/{productKey} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /productCache/{productKey} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /users_profile/{profileId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /ratings/{ratingId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /cookLogs/{logId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Données en forme d'objet (pas de liste) — priceHistory,
+      // productCache. Un seul document par type de donnée.
+      match /meta/{docName} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // ═══════════════════════════════════════════════════
+    // Cache produit PARTAGÉ — visible par tous les comptes
+    // connectés (lecture), modifiable uniquement par l'admin
+    // (écriture). C'est la base de connaissance commune qui
+    // grossit avec le travail d'enrichissement de l'admin.
+    // ═══════════════════════════════════════════════════
+    match /shared_product_cache/{productKey} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Tout le reste est refusé par défaut
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

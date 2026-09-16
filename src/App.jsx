@@ -1,6 +1,20 @@
 import { useState, useEffect, useRef } from 'react'
 import TicketCamera from './components/TicketCamera'
+import BarcodeScanner from './components/BarcodeScanner'
 import { searchProduct, getProductByBarcode } from './services/openFoodFacts'
+import { useAuth } from './hooks/useAuth'
+import { useSharedProductCache, writeSharedProduct } from './hooks/useSharedProductCache'
+import { httpsCallable } from 'firebase/functions'
+import { functions } from './config/firebase'
+import {
+  migrateLocalStorageToFirestore,
+  useFirestoreCollection,
+} from './hooks/useFirestoreCollection'
+import {
+  useFirestoreDoc,
+  migrateLocalStorageObjectToFirestore,
+  mergeFirestoreDocField,
+} from './hooks/useFirestoreDoc'
 
 // ─── Palette & Design Tokens ───────────────────────────────────────────────
 const C = {
@@ -47,6 +61,12 @@ const STORAGE_TYPES = [
   { id: 'garde_manger', label: 'Garde-manger', icon: '🏺', color: C.terra },
 ]
 
+// ⚠️ Remplace par ton vrai UID Firebase — visible dans Firebase Console
+// → Authentication → Users, une fois connecté au moins une fois.
+// Seuls ces comptes peuvent écrire dans le cache produit PARTAGÉ
+// (voir useSharedProductCache.js et firestore.rules).
+const ADMIN_UIDS = ['REMPLACE_PAR_TON_UID']
+
 const CATEGORIES = [
   'Légumes',
   'Fruits',
@@ -57,7 +77,38 @@ const CATEGORIES = [
   'Conserves',
   'Autre',
 ]
-const UNITS = ['g', 'kg', 'ml', 'L', 'pièce(s)', 'boîte(s)', 'sachet(s)', 'botte(s)', 'tranche(s)']
+
+// Estimation de dernier recours quand aucun prix réel n'a encore été
+// enregistré pour ce produit (voir getPriceEstimate)
+const PRICE_FALLBACK_BY_CATEGORY = {
+  Légumes: 2.5,
+  Fruits: 3,
+  'Viande/Poisson': 7,
+  Féculents: 2,
+  Laitiers: 2.5,
+  'Épices/Sauces': 2,
+  Conserves: 2,
+  Autre: 3,
+  Hygiène: 4,
+  Entretien: 3.5,
+  Beauté: 6,
+  Papeterie: 3,
+  Animalerie: 5,
+  'Autre maison': 4,
+}
+
+const UNITS = [
+  'g',
+  'kg',
+  'ml',
+  'cl',
+  'L',
+  'pièce(s)',
+  'boîte(s)',
+  'sachet(s)',
+  'botte(s)',
+  'tranche(s)',
+]
 
 const ENERGY_LEVELS = [
   { id: 'vide', label: 'À plat 🪫', desc: '5-10 min, zéro effort' },
@@ -86,6 +137,9 @@ const STORAGE_KEYS = {
   nonFood: 'lgm_nonfood',
   mealHistory: 'lgm_meal_history',
   manualCart: 'lgm_manual_cart',
+  savedRecipes: 'lgm_saved_recipes',
+  priceHistory: 'lgm_price_history',
+  productCache: 'lgm_product_cache',
 }
 
 const NONFOOD_CATEGORIES = [
@@ -413,114 +467,185 @@ function ManualCartAdd({ onAdd }) {
   const [nom, setNom] = useState('')
   const [quantity, setQuantity] = useState('')
   const [unit, setUnit] = useState('pièce(s)')
+  const [isFood, setIsFood] = useState(true)
 
   const submit = () => {
     if (!nom.trim()) return
-    onAdd({ nom: nom.trim(), quantity: quantity || '1', unit })
+    onAdd({ nom: nom.trim(), quantity: quantity || '1', unit, isFood })
     setNom('')
     setQuantity('')
   }
 
   return (
-    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-      <input
-        placeholder='Nutella, Pain de mie...'
-        value={nom}
-        onChange={(e) => setNom(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && submit()}
-        dir='ltr'
-        autoComplete='off'
-        style={{
-          flex: 2,
-          background: '#faf7f0',
-          border: `1.5px solid #c4af90`,
-          borderRadius: '10px',
-          padding: '9px 11px',
-          color: '#3a2a1a',
-          fontSize: '14px',
-          fontFamily: "'Lato',sans-serif",
-          outline: 'none',
-        }}
-      />
-      <input
-        placeholder='Qté'
-        value={quantity}
-        onChange={(e) => setQuantity(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && submit()}
-        style={{
-          width: '52px',
-          background: '#faf7f0',
-          border: `1.5px solid #c4af90`,
-          borderRadius: '10px',
-          padding: '9px 8px',
-          color: '#3a2a1a',
-          fontSize: '13px',
-          fontFamily: "'Lato',sans-serif",
-          outline: 'none',
-          textAlign: 'center',
-        }}
-      />
-      <select
-        value={unit}
-        onChange={(e) => setUnit(e.target.value)}
-        style={{
-          width: '72px',
-          background: '#faf7f0',
-          border: `1.5px solid #c4af90`,
-          borderRadius: '10px',
-          padding: '9px 4px',
-          color: '#3a2a1a',
-          fontSize: '11px',
-          fontFamily: "'Lato',sans-serif",
-        }}
-      >
-        {['pièce(s)', 'g', 'kg', 'ml', 'L', 'boîte(s)', 'sachet(s)', 'rouleau(x)'].map((u) => (
-          <option key={u}>{u}</option>
-        ))}
-      </select>
-      <button
-        onClick={submit}
-        style={{
-          background: 'linear-gradient(135deg,#4a7c59,#6a9e78)',
-          color: '#fff',
-          border: 'none',
-          borderRadius: '10px',
-          padding: '9px 14px',
-          fontSize: '16px',
-          fontWeight: 700,
-          cursor: 'pointer',
-          flexShrink: 0,
-        }}
-      >
-        +
-      </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div style={{ display: 'flex', gap: '6px' }}>
+        <button
+          onClick={() => setIsFood(true)}
+          style={{
+            flex: 1,
+            padding: '6px 10px',
+            borderRadius: '10px',
+            fontSize: '11px',
+            fontWeight: 700,
+            border: isFood ? '1.5px solid #4a7c59' : '1px solid #ddd0b8',
+            background: isFood ? '#4a7c5918' : '#faf7f0',
+            color: isFood ? '#4a7c59' : '#b0987a',
+            cursor: 'pointer',
+            fontFamily: "'Lato',sans-serif",
+          }}
+        >
+          🥦 Alimentaire
+        </button>
+        <button
+          onClick={() => setIsFood(false)}
+          style={{
+            flex: 1,
+            padding: '6px 10px',
+            borderRadius: '10px',
+            fontSize: '11px',
+            fontWeight: 700,
+            border: !isFood ? '1.5px solid #c1602a' : '1px solid #ddd0b8',
+            background: !isFood ? '#c1602a18' : '#faf7f0',
+            color: !isFood ? '#c1602a' : '#b0987a',
+            cursor: 'pointer',
+            fontFamily: "'Lato',sans-serif",
+          }}
+        >
+          🧴 Maison
+        </button>
+      </div>
+      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+        <input
+          placeholder='Nutella, Pain de mie...'
+          value={nom}
+          onChange={(e) => setNom(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
+          dir='ltr'
+          autoComplete='off'
+          style={{
+            flex: 2,
+            background: '#faf7f0',
+            border: `1.5px solid #c4af90`,
+            borderRadius: '10px',
+            padding: '9px 11px',
+            color: '#3a2a1a',
+            fontSize: '14px',
+            fontFamily: "'Lato',sans-serif",
+            outline: 'none',
+          }}
+        />
+        <input
+          placeholder='Qté'
+          value={quantity}
+          onChange={(e) => setQuantity(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
+          style={{
+            width: '52px',
+            background: '#faf7f0',
+            border: `1.5px solid #c4af90`,
+            borderRadius: '10px',
+            padding: '9px 8px',
+            color: '#3a2a1a',
+            fontSize: '13px',
+            fontFamily: "'Lato',sans-serif",
+            outline: 'none',
+            textAlign: 'center',
+          }}
+        />
+        <select
+          value={unit}
+          onChange={(e) => setUnit(e.target.value)}
+          style={{
+            width: '72px',
+            background: '#faf7f0',
+            border: `1.5px solid #c4af90`,
+            borderRadius: '10px',
+            padding: '9px 4px',
+            color: '#3a2a1a',
+            fontSize: '11px',
+            fontFamily: "'Lato',sans-serif",
+          }}
+        >
+          {['pièce(s)', 'g', 'kg', 'ml', 'L', 'boîte(s)', 'sachet(s)', 'rouleau(x)'].map((u) => (
+            <option key={u}>{u}</option>
+          ))}
+        </select>
+        <button
+          onClick={submit}
+          style={{
+            background: 'linear-gradient(135deg,#4a7c59,#6a9e78)',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '10px',
+            padding: '9px 14px',
+            fontSize: '16px',
+            fontWeight: 700,
+            cursor: 'pointer',
+            flexShrink: 0,
+          }}
+        >
+          +
+        </button>
+      </div>
     </div>
   )
 }
 
 export default function App() {
+  const { user, isLoading: authLoading, isAuthenticated, login, logout } = useAuth()
+  const sharedProductCache = useSharedProductCache()
+  const isAdmin = !!user && ADMIN_UIDS.includes(user.uid)
+
   const [tab, setTab] = useState('frigo')
-  const [ingredients, setIngredients] = useStorage(STORAGE_KEYS.ingredients, [])
-  const [equipment, setEquipment] = useStorage(STORAGE_KEYS.equipment, [])
-  const [shoppingLists, setShoppingLists] = useStorage(STORAGE_KEYS.shoppingLists, [])
-  const [users, setUsers] = useStorage(STORAGE_KEYS.users, [])
-  const [ratings, setRatings] = useStorage(STORAGE_KEYS.ratings, [])
-  const [cookLogs, setCookLogs] = useStorage(STORAGE_KEYS.cookLogs, [])
-  const [nonFood, setNonFood] = useStorage(STORAGE_KEYS.nonFood, [])
-  const [mealHistory, setMealHistory] = useStorage(STORAGE_KEYS.mealHistory, [])
-  const [manualCart, setManualCart] = useStorage(STORAGE_KEYS.manualCart, [])
+  const [ingredients, setIngredients] = useFirestoreCollection(user?.uid, 'ingredients', [])
+  const [equipment, setEquipment] = useFirestoreCollection(user?.uid, 'equipment', [])
+  const [shoppingLists, setShoppingLists] = useFirestoreCollection(user?.uid, 'shoppingLists', [])
+  const [users, setUsers] = useFirestoreCollection(user?.uid, 'users_profile', [])
+  const [ratings, setRatings] = useFirestoreCollection(user?.uid, 'ratings', [])
+  const [cookLogs, setCookLogs] = useFirestoreCollection(user?.uid, 'cookLogs', [])
+  const [nonFood, setNonFood] = useFirestoreCollection(user?.uid, 'nonFood', [])
+  const [mealHistory, setMealHistory] = useFirestoreCollection(user?.uid, 'mealHistory', [])
+  const [manualCart, setManualCart] = useFirestoreCollection(user?.uid, 'manualCart', [])
+  const [savedRecipes, setSavedRecipes] = useFirestoreCollection(user?.uid, 'savedRecipes', [])
+  // priceHistory et productCache sont des objets (clé → valeur), pas des
+  // listes — on utilise useFirestoreDoc (un seul document) plutôt que
+  // useFirestoreCollection (un document par élément).
+  const [priceHistory, setPriceHistory] = useFirestoreDoc(user?.uid, 'priceHistory', {})
+  const [productCache, setProductCache] = useFirestoreDoc(user?.uid, 'productCache', {})
+
+  // Migration unique localStorage → Firestore au premier login.
+  // Tant que cette étape n'est pas branchée collection par collection
+  // (prochaine session), l'app continue de fonctionner en localStorage
+  // même connecté — la connexion Google ne fait pour l'instant
+  // qu'authentifier l'utilisateur, sans encore déplacer les données.
+  const migrationRanRef = useRef(false)
+  useEffect(() => {
+    if (!user || migrationRanRef.current) return
+    migrationRanRef.current = true
+    migrateLocalStorageToFirestore(user.uid, 'ingredients', STORAGE_KEYS.ingredients)
+    migrateLocalStorageToFirestore(user.uid, 'nonFood', STORAGE_KEYS.nonFood)
+    migrateLocalStorageToFirestore(user.uid, 'equipment', STORAGE_KEYS.equipment)
+    migrateLocalStorageToFirestore(user.uid, 'shoppingLists', STORAGE_KEYS.shoppingLists)
+    migrateLocalStorageToFirestore(user.uid, 'manualCart', STORAGE_KEYS.manualCart)
+    migrateLocalStorageToFirestore(user.uid, 'savedRecipes', STORAGE_KEYS.savedRecipes)
+    migrateLocalStorageToFirestore(user.uid, 'users_profile', STORAGE_KEYS.users)
+    migrateLocalStorageToFirestore(user.uid, 'ratings', STORAGE_KEYS.ratings)
+    migrateLocalStorageToFirestore(user.uid, 'cookLogs', STORAGE_KEYS.cookLogs)
+    migrateLocalStorageToFirestore(user.uid, 'mealHistory', STORAGE_KEYS.mealHistory)
+    migrateLocalStorageObjectToFirestore(user.uid, 'priceHistory', STORAGE_KEYS.priceHistory)
+    migrateLocalStorageObjectToFirestore(user.uid, 'productCache', STORAGE_KEYS.productCache)
+  }, [user])
 
   // Ticket scan state
   const [showTicketCamera, setShowTicketCamera] = useState(false)
   const [showScanPanel, setShowScanPanel] = useState(false)
   const [scanLoading, setScanLoading] = useState(false)
-  const [scanPhases, setScanPhases] = useState({
-    haute: [], // import direct
-    moyenne: [], // candidats OFF proposés
-    basse: [], // scan code-barres requis
-    validated: [], // tous les articles confirmés
-  })
-  const [offLoading, setOffLoading] = useState(false) // Open Food Facts en cours
+  // Une seule liste — chaque ligne est déjà classifiée (nom, catégorie,
+  // stockage, quantité, unité) et directement importable. Open Food
+  // Facts n'est plus interrogé par défaut ; c'est une recherche à la
+  // demande, par ligne, via le bouton 🔍 (voir searchOffForLine).
+  const [scanPhases, setScanPhases] = useState({ items: [] })
+  const [offLoading, setOffLoading] = useState(false) // recherche OFF ponctuelle en cours (par ligne)
   // TODO: scan code-barres — à implémenter avec @zxing/library
   const [currentBarcodeTarget, setCurrentBarcodeTarget] = useState(null)
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
@@ -529,6 +654,10 @@ export default function App() {
   const [fridgeSubTab, setFridgeSubTab] = useState('food')
   const [lastTicketItems, setLastTicketItems] = useState([]) // 3 derniers articles
   const [photoCount, setPhotoCount] = useState(0)
+  const [scanResult, setScanResult] = useState(null)
+
+  // Import PDF — commandes drive (Leclerc, Carrefour, Auchan...)
+  const [pdfLoading, setPdfLoading] = useState(false)
 
   // Adapt panel state
   const [adaptTarget, setAdaptTarget] = useState(null)
@@ -549,10 +678,18 @@ export default function App() {
     name: '',
     quantity: '',
     unit: 'g',
+    unitCount: '', // ex: 8 (pour "8 yaourts de 125g") — optionnel
     category: 'Légumes',
     dlc: '',
     storage: 'frigo_semaine',
+    price: '',
   })
+  // null = mode "ajout" ; sinon id de l'ingrédient en cours de modification
+  const [editingIngredientId, setEditingIngredientId] = useState(null)
+
+  // Confirmation après scan code-barres — pré-rempli, modifiable avant ajout
+  const [pendingBarcodeProduct, setPendingBarcodeProduct] = useState(null)
+  const [showBarcodeConfirm, setShowBarcodeConfirm] = useState(false)
 
   // Equipment state
   const [showAddEq, setShowAddEq] = useState(false)
@@ -573,6 +710,9 @@ export default function App() {
   const [recipePortions, setRecipePortions] = useState({})
   const recipeResultRef = useRef(null)
   const [selectedConvives, setSelectedConvives] = useState([])
+  const [tolerance, setTolerance] = useState('strict')
+  const [showRecipeTextInput, setShowRecipeTextInput] = useState(false)
+  const [recipeTextInput, setRecipeTextInput] = useState('')
 
   // Mode soirée / budget / vide-frigo
   const [modeSoiree, setModeSoiree] = useState(false)
@@ -605,17 +745,60 @@ export default function App() {
   const filteredIngs =
     filterCat === 'Tous' ? ingredients : ingredients.filter((i) => i.category === filterCat)
 
+  const emptyIngForm = {
+    name: '',
+    quantity: '',
+    unit: 'g',
+    unitCount: '',
+    category: 'Légumes',
+    dlc: '',
+    storage: 'frigo_semaine',
+    price: '',
+  }
+
   const addIngredient = () => {
     if (!newIng.name.trim()) return
-    setIngredients((p) => [...p, { ...newIng, id: Date.now() }])
+
+    if (editingIngredientId) {
+      // Mode modification — on remplace l'ingrédient existant en gardant son id
+      setIngredients((p) =>
+        p.map((ing) =>
+          ing.id === editingIngredientId ? { ...newIng, id: editingIngredientId } : ing
+        )
+      )
+    } else {
+      // Mode ajout — nouvel ingrédient
+      setIngredients((p) => [...p, { ...newIng, id: Date.now() }])
+    }
+
+    if (newIng.price) {
+      recordPrice({ name: newIng.name, price: newIng.price, source: 'manuel' })
+    }
+
+    setNewIng(emptyIngForm)
+    setEditingIngredientId(null)
+    setShowAddIng(false)
+  }
+
+  // Ouvre le formulaire pré-rempli avec les valeurs de l'ingrédient à modifier
+  const editIngredient = (ing) => {
     setNewIng({
-      name: '',
-      quantity: '',
-      unit: 'g',
-      category: 'Légumes',
-      dlc: '',
-      storage: 'frigo_semaine',
+      name: ing.name || '',
+      quantity: ing.quantity || '',
+      unit: ing.unit || 'g',
+      unitCount: ing.unitCount || '',
+      category: ing.category || 'Légumes',
+      dlc: ing.dlc || '',
+      storage: ing.storage || 'frigo_semaine',
+      price: ing.price || '',
     })
+    setEditingIngredientId(ing.id)
+    setShowAddIng(true)
+  }
+
+  const cancelIngredientForm = () => {
+    setNewIng(emptyIngForm)
+    setEditingIngredientId(null)
     setShowAddIng(false)
   }
 
@@ -625,142 +808,686 @@ export default function App() {
     const product = await getProductByBarcode(barcode)
     if (!product) return
     const { idx } = currentBarcodeTarget
-    setScanPhases((p) => {
-      const item = { ...p.basse[idx], candidats: [product], selected_candidat: 0, selected: true }
-      return { ...p, basse: p.basse.filter((_, i) => i !== idx), moyenne: [...p.moyenne, item] }
-    })
+    setScanPhases((p) => ({
+      ...p,
+      items: p.items.map((item, i) =>
+        i === idx
+          ? {
+              ...item,
+              // Un code-barres scanné = identification certaine —
+              // remplace le nom/catégorie par la fiche officielle trouvée
+              nom_propre: product.nom || item.nom_propre,
+              category: product.categorie || item.category,
+              image: product.image || null,
+              barcode: product.code_barres || null,
+              confianceNom: 'haute',
+            }
+          : item
+      ),
+    }))
   }
 
   const handleFrigoBarcodeResult = async (barcode) => {
     setShowFrigoBarcode(false)
     const product = await getProductByBarcode(barcode)
-    if (!product) return
+    if (!product) {
+      setPendingBarcodeProduct({
+        name: '',
+        quantity: '1',
+        unit: 'pièce(s)',
+        category: 'Autre',
+        storage: 'garde_manger',
+        dlc: '',
+        price: '',
+        notFound: true,
+        barcode,
+        source: 'barcode',
+      })
+      setShowBarcodeConfirm(true)
+      return
+    }
+
+    // Parsing prudent du poids OFF — évite les valeurs aberrantes (ex: "1500" sans unité claire)
+    const rawPoids = (product.poids || '').trim()
+    const weightMatch = rawPoids.match(/([\d.,]+)\s*([a-zA-Zµ]+)/)
+    const parsedQty = weightMatch ? weightMatch[1].replace(',', '.') : '1'
+    const parsedUnit = weightMatch
+      ? weightMatch[2].toLowerCase().replace('cl', 'cl').replace('kg', 'kg')
+      : 'pièce(s)'
+
+    setPendingBarcodeProduct({
+      name: product.nom?.trim() || `Produit ${barcode}`,
+      quantity: parsedQty,
+      unit: UNITS.includes(parsedUnit) ? parsedUnit : 'pièce(s)',
+      category: 'Autre',
+      storage: 'garde_manger',
+      dlc: '',
+      price: '', // Open Food Facts ne fournit pas de prix — saisie manuelle si connu
+      brand: product.marque || '',
+      image: product.image || null,
+      barcode,
+      notFound: false,
+      source: 'barcode',
+    })
+    setShowBarcodeConfirm(true)
+  }
+
+  const confirmBarcodeProduct = (chainNext = false) => {
+    if (!pendingBarcodeProduct?.name?.trim()) return
+
+    // Édition d'une ligne du scan de ticket/PDF — met juste à jour cette
+    // ligne dans la liste, ne l'ajoute PAS encore au frigo. L'import
+    // réel se fait par le bouton "✓ Importer" en bas, une fois pour
+    // toutes les lignes sélectionnées.
+    if (pendingBarcodeProduct.source === 'ticket') {
+      const { idx } = pendingBarcodeProduct
+      setScanPhases((p) => ({
+        ...p,
+        items: p.items.map((item, i) =>
+          i === idx
+            ? {
+                ...item,
+                nom_propre: pendingBarcodeProduct.name.trim(),
+                category: pendingBarcodeProduct.category,
+                storage: pendingBarcodeProduct.storage,
+                quantity: parseFloat(pendingBarcodeProduct.quantity) || 1,
+                unit: pendingBarcodeProduct.unit,
+                prix: pendingBarcodeProduct.price
+                  ? parseFloat(pendingBarcodeProduct.price)
+                  : item.prix,
+                image: pendingBarcodeProduct.image || item.image,
+                barcode: pendingBarcodeProduct.barcode || item.barcode,
+                confianceNom: 'haute', // corrigée manuellement — confiance rétablie
+              }
+            : item
+        ),
+      }))
+      setShowBarcodeConfirm(false)
+      setPendingBarcodeProduct(null)
+      return
+    }
+
+    // Scan code-barres direct (onglet Frigo) ou saisie manuelle — ajoute
+    // immédiatement au frigo, ce chemin ne passe pas par la liste de scan
     setIngredients((p) => [
       ...p,
       {
         id: Date.now() + Math.random(),
-        name: product.nom,
-        quantity: product.poids?.replace(/[^\d.]/g, '') || '1',
-        unit: product.poids?.match(/[a-zA-Z]+/)?.[0]?.toLowerCase() || 'pièce(s)',
-        category: 'Autre',
-        dlc: '',
-        storage: 'garde_manger',
+        name: pendingBarcodeProduct.name.trim(),
+        quantity: pendingBarcodeProduct.quantity || '1',
+        unit: pendingBarcodeProduct.unit || 'pièce(s)',
+        category: pendingBarcodeProduct.category || 'Autre',
+        dlc: pendingBarcodeProduct.dlc || '',
+        storage: pendingBarcodeProduct.storage || 'garde_manger',
+        price: pendingBarcodeProduct.price || '',
       },
     ])
+
+    // Enregistre le prix dans l'historique — seulement s'il est renseigné.
+    if (pendingBarcodeProduct.price) {
+      recordPrice({
+        name: pendingBarcodeProduct.name,
+        barcode: pendingBarcodeProduct.barcode,
+        price: pendingBarcodeProduct.price,
+        source: 'manuel',
+      })
+    }
+
+    // Cache produit — c'est le moment le plus fiable pour mémoriser,
+    // le nom a été validé (et potentiellement corrigé) par toi.
+    cacheProduct({
+      name: pendingBarcodeProduct.name,
+      barcode: pendingBarcodeProduct.barcode,
+      category: pendingBarcodeProduct.category,
+      image: pendingBarcodeProduct.image,
+      marque: pendingBarcodeProduct.brand,
+      source: pendingBarcodeProduct.source || 'manuel',
+    })
+
+    setShowBarcodeConfirm(false)
+    setPendingBarcodeProduct(null)
+
+    // Scan en rafale — utile quand on range les courses et qu'on veut
+    // enchaîner produit après produit sans repasser par le bouton 📷
+    if (chainNext) {
+      setShowFrigoBarcode(true)
+    }
   }
 
-  // ── Ticket scan
-  const scanTicket = async (file) => {
+  // Ouvre la modale d'édition à partir d'une ligne de la liste de scan —
+  // tout vient déjà de la classification (nom, catégorie, stockage,
+  // quantité, unité), plus besoin de dépendre d'un candidat OFF
+  const openTicketLineEditor = (idx) => {
+    const item = scanPhases.items[idx]
+
+    setPendingBarcodeProduct({
+      name: item.nom_propre || item.texte_brut || '',
+      quantity: String(item.quantity || 1),
+      unit: item.unit || 'pièce(s)',
+      category: item.category || 'Autre',
+      storage: item.storage || 'garde_manger',
+      dlc: '',
+      // Le prix vient directement du ticket (réellement payé) — c'est
+      // une donnée fiable, on la pré-remplit mais reste modifiable
+      // (utile pour les formats promo/lot qui faussent le prix unitaire)
+      price: item.prix != null ? String(item.prix) : '',
+      brand: '',
+      image: item.image || null,
+      barcode: item.barcode || null,
+      notFound: item.confianceNom === 'basse',
+      source: 'ticket',
+      idx,
+      ticketRawText: item.texte_brut,
+    })
+    setShowBarcodeConfirm(true)
+  }
+
+  // Recherche OFF À LA DEMANDE — plus jamais automatique en masse.
+  // Un clic, une ligne, une vraie recherche. Si un match est trouvé, on
+  // propose de l'adopter (photo + nom officiel) via la modale d'édition
+  // déjà pré-remplie ; sinon on informe simplement qu'il n'y a rien.
+  async function searchOffForLine(idx) {
+    const item = scanPhases.items[idx]
+    if (!item) return
+
+    setOffLoading(true)
+    const candidats = await searchProduct(item.nom_propre || item.texte_brut)
+    setOffLoading(false)
+
+    if (!candidats || candidats.length === 0) {
+      alert('Aucune fiche trouvée sur Open Food Facts pour ce produit.')
+      return
+    }
+
+    const best = candidats[0]
+    setPendingBarcodeProduct({
+      name: best.nom || item.nom_propre || item.texte_brut,
+      quantity: String(item.quantity || 1),
+      unit: item.unit || 'pièce(s)',
+      category: item.category || 'Autre',
+      storage: item.storage || 'garde_manger',
+      dlc: '',
+      price: item.prix != null ? String(item.prix) : '',
+      brand: best.marque || '',
+      image: best.image || null,
+      barcode: best.code_barres || null,
+      notFound: false,
+      source: 'ticket',
+      idx,
+      ticketRawText: item.texte_brut,
+    })
+    setShowBarcodeConfirm(true)
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // CACHE PRODUIT — accéléré par tes propres scans
+  // ═══════════════════════════════════════════════════════════════
+  // Chaque produit identifié avec certitude (scan code-barres réussi,
+  // ou correction manuelle validée) est mémorisé ici. Sur un scan de
+  // ticket futur, ce cache est consulté EN PREMIER — avant Open Food
+  // Facts — pour les produits que tu as déjà rencontrés. Zéro appel
+  // externe, zéro latence, zéro limite de débit pour tes achats
+  // récurrents. Le cache grossit à chaque usage réel de l'app.
+
+  function cacheProduct({ name, barcode, category, image, marque, source }) {
+    if (!name?.trim()) return
+    const key = barcode ? `bc_${barcode}` : `nm_${normalizePriceKey(name)}`
+    const entry = {
+      name: name.trim(),
+      barcode: barcode || null,
+      category: category || null,
+      image: image || null,
+      marque: marque || '',
+      source,
+      lastSeen: new Date().toISOString(),
+    }
+    // Écriture ciblée sur cette seule clé — safe même si plusieurs
+    // produits sont mis en cache coup sur coup (import de ticket)
+    mergeFirestoreDocField(user?.uid, 'productCache', key, entry)
+
+    // Si le compte courant est admin, la correction alimente AUSSI le
+    // cache partagé — tout le monde en profite immédiatement, pas
+    // seulement toi. Un utilisateur normal ne touche que son cache perso.
+    if (isAdmin) {
+      writeSharedProduct(key, entry)
+    }
+  }
+
+  function getFromCache(name, barcode) {
+    const byBarcode = barcode ? productCache[`bc_${barcode}`] : null
+    if (byBarcode) return byBarcode
+    const byName = productCache[`nm_${normalizePriceKey(name)}`]
+    if (byName) return byName
+
+    // Rien dans le cache personnel — on retombe sur le cache partagé,
+    // enrichi par l'admin, avant de devoir interroger Open Food Facts
+    const sharedByBarcode = barcode ? sharedProductCache[`bc_${barcode}`] : null
+    if (sharedByBarcode) return sharedByBarcode
+    const sharedByName = sharedProductCache[`nm_${normalizePriceKey(name)}`]
+    return sharedByName || null
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // PRIX — historique réel & estimation
+  // ═══════════════════════════════════════════════════════════════
+  // Principe : chaque prix connu (issu d'un scan de ticket = prix
+  // réellement payé, ou saisi manuellement) est enregistré dans un
+  // historique par produit. L'estimation utilisée pour les courses
+  // prend la MÉDIANE des derniers prix connus — plus robuste qu'une
+  // moyenne face à un prix aberrant (ex: prix d'un lot promo isolé).
+  // Clé de préférence : le code-barres (fiable, univoque). À défaut,
+  // le nom normalisé (moins fiable — deux produits différents peuvent
+  // partager un nom proche).
+
+  function normalizePriceKey(name) {
+    return (name || '').toLowerCase().trim().replace(/\s+/g, ' ')
+  }
+
+  function recordPrice({ name, barcode, price, source }) {
+    const numPrice = parseFloat(price)
+    if (!numPrice || numPrice <= 0) return // ignore prix vide/invalide — ne pollue pas l'historique
+
+    const key = barcode ? `bc_${barcode}` : `nm_${normalizePriceKey(name)}`
+    // On part de l'état local en mémoire (priceHistory) pour construire
+    // l'historique de CETTE clé précise — même s'il est parfois légèrement
+    // périmé de quelques centaines de ms, ça ne concerne que cette clé.
+    // L'écriture elle-même est ciblée (merge sur cette seule clé), donc
+    // aucun risque d'écraser les prix des AUTRES produits en cours d'ajout.
+    const existing = priceHistory[key]?.entries || []
+    const entries = [
+      ...existing,
+      { price: numPrice, date: new Date().toISOString(), source },
+    ].slice(-8) // garde les 8 derniers prix — suffisant pour une médiane stable
+
+    mergeFirestoreDocField(user?.uid, 'priceHistory', key, {
+      name,
+      barcode: barcode || null,
+      entries,
+    })
+  }
+
+  function median(numbers) {
+    const sorted = [...numbers].sort((a, b) => a - b)
+    const mid = Math.floor(sorted.length / 2)
+    return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+  }
+
+  function getPriceEstimate(name, barcode, category) {
+    const keyByBarcode = barcode ? `bc_${barcode}` : null
+    const keyByName = `nm_${normalizePriceKey(name)}`
+
+    const fromBarcode = keyByBarcode ? priceHistory[keyByBarcode] : null
+    const fromName = priceHistory[keyByName]
+    const record = fromBarcode || fromName
+
+    if (record?.entries?.length > 0) {
+      const prices = record.entries.map((e) => e.price)
+      return {
+        estimated: median(prices),
+        confidence: fromBarcode ? 'high' : 'medium',
+        source: fromBarcode ? 'historique (code-barres)' : 'historique (nom)',
+      }
+    }
+
+    const base = PRICE_FALLBACK_BY_CATEGORY[category] || 3
+    return { estimated: base, confidence: 'low', source: 'estimation par catégorie' }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // MATCHING PARTAGÉ — cache local puis Open Food Facts
+  // ═══════════════════════════════════════════════════════════════
+  // Utilisé à la fois par le scan de ticket (photo) et l'import PDF
+  // (commande drive) — même moteur de reconnaissance pour les deux
+  // sources, avec le cache local consulté en priorité absolue.
+
+  // ═══════════════════════════════════════════════════════════════
+  // NETTOYAGE + CLASSIFICATION — séparé de la recherche OFF
+  // ═══════════════════════════════════════════════════════════════
+  // Reformuler "PANZANI SERPENTINI 500G" en "Pâtes Serpentini Panzani",
+  // déterminer si c'est alimentaire ou pas, choisir une catégorie et
+  // un mode de stockage adapté — tout ça n'a RIEN à voir avec chercher
+  // le bon produit dans la base OFF. C'est de la classification de
+  // texte, pas une recherche ambiguë. Un modèle de langage fait ça très
+  // bien et sans hésitation, contrairement à la recherche floue OFF qui
+  // échoue souvent sur les tickets français.
+  //
+  // Utilisé à la fois par le scan de ticket ET l'import PDF — les deux
+  // sources se contentaient avant d'un "alimentaire" codé en dur, d'où
+  // le mélange alimentaire/non-alimentaire et le "tout au garde-manger"
+  // même pour de la viande ou des produits frais.
+  async function cleanupLigneNames(lignes) {
+    if (!lignes || lignes.length === 0) return lignes
+
+    try {
+      const prompt = `Voici des lignes de ticket de caisse ou de commande drive français, extraites par un OCR automatique. Certaines sont juste abrégées (facile à déchiffrer), d'autres sont du BRUIT OCR corrompu (caractères incohérents, mots fusionnés, aucun sens réel) — les deux cas doivent être traités différemment.
+
+Pour CHAQUE ligne, détermine :
+1. "nom_propre" : le nom du produit reformulé clairement et naturellement.
+   - Si la ligne est abrégée mais déchiffrable (ex: "PANZANI SERPENTINI 500G"),
+     reformule-la normalement, sans changer le sens, sans inventer de marque ou
+     de détail non suggéré, sans mentions d'origine/prix au kilo qui alourdissent
+     inutilement, ET sans le grammage (qui va dans des champs séparés).
+   - Si la ligne est du BRUIT OCR incohérent où aucun produit réel n'est
+     identifiable avec confiance (ex: "N.JARDINA, P.P.CA GR.1/4.31X906") —
+     NE DEVINE PAS un produit plausible mais possiblement faux. Renvoie le
+     texte tel quel, et mets "confiance": "basse" (voir point 7).
+2. "type" : "alimentaire" ou "non_alimentaire"
+3. "category" : une catégorie parmi EXACTEMENT ces valeurs :
+   Légumes, Fruits, Viande/Poisson, Féculents, Laitiers, Épices/Sauces,
+   Conserves, Autre (si alimentaire) — ou Hygiène, Entretien, Beauté,
+   Papeterie, Animalerie, Autre maison (si non alimentaire)
+4. "storage" : UNIQUEMENT si alimentaire, un mode de stockage parmi
+   EXACTEMENT ces valeurs :
+   - "frigo_jour" : produits très frais à consommer vite (poisson cru, viande hachée fraîche)
+   - "frigo_semaine" : frigo classique (viande, charcuterie, produits laitiers, légumes frais)
+   - "congelateur" : surgelés
+   - "garde_manger" : NON périssable à température ambiante (pâtes, conserves, riz, huile, épices)
+   Une charcuterie, de la viande, du poulet, du fromage frais → "frigo_semaine", JAMAIS "garde_manger".
+5. "quantity" : la VALEUR NUMÉRIQUE du grammage/volume/nombre trouvé dans le texte
+   (ex: "500G" → 500, "1kg" → 1, "4 tranches" → 4, "1L" → 1).
+   Si aucune quantité n'est identifiable, mets 1.
+6. "unit" : l'unité correspondante, EXACTEMENT une de ces valeurs :
+   g, kg, ml, cl, L, pièce(s), boîte(s), sachet(s), botte(s), tranche(s)
+   Si aucune unité n'est identifiable, mets "pièce(s)".
+7. "confiance" : "haute" si tu es sûr du produit identifié, "basse" si le
+   texte est du bruit OCR où tu as dû deviner ou renvoyer le texte brut.
+   Cette valeur sert à prévenir l'utilisateur de vérifier cette ligne
+   avant de faire confiance aux autres champs (catégorie, stockage...).
+
+Exemples :
+"PANZANI, SERPENTINI C.RAP.,500G" → nom_propre: "Pâtes Serpentini Panzani", type: alimentaire, category: Féculents, storage: garde_manger, quantity: 500, unit: g, confiance: haute
+"Carrefour extra jambon le supérieur cuit à l'etouffée 4 tranches 160g" → nom_propre: "Jambon supérieur cuit Carrefour", type: alimentaire, category: Viande/Poisson, storage: frigo_semaine, quantity: 160, unit: g, confiance: haute
+"N.JARDINA, P.P.CA GR.1/4.31X906" → nom_propre: "N.JARDINA, P.P.CA GR.1/4.31X906" (inchangé), type: alimentaire, category: Autre, storage: garde_manger, quantity: 1, unit: pièce(s), confiance: basse
+
+Lignes à traiter :
+${lignes.map((l, i) => `${i}: ${l.texte_brut}`).join('\n')}
+
+Réponds UNIQUEMENT en JSON valide, un tableau dans le MÊME ORDRE :
+[{ "nom_propre": "...", "type": "alimentaire", "category": "...", "storage": "garde_manger", "quantity": 500, "unit": "g", "confiance": "haute" }, ...]`
+
+      const res = await fetch('/app/api-proxy.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proxy_token: 'lgm_2024_xK9mP3',
+          model: 'gpt-4o-mini',
+          max_tokens: 3000,
+          temperature: 0,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      })
+      const data = await res.json()
+      const text = data.content?.map((b) => b.text || '').join('') || ''
+      const classified = JSON.parse(text.replace(/```json|```/g, '').trim())
+
+      if (!Array.isArray(classified) || classified.length !== lignes.length) {
+        return lignes // format inattendu — on continue avec les données brutes plutôt que planter
+      }
+
+      return lignes.map((l, i) => {
+        const c = classified[i] || {}
+        const parsedQty = parseFloat(c.quantity)
+        return {
+          ...l,
+          nom_propre: c.nom_propre || l.texte_brut,
+          type: c.type || l.type || 'alimentaire',
+          category: c.category || 'Autre',
+          storage: c.storage || 'garde_manger',
+          quantity: !isNaN(parsedQty) && parsedQty > 0 ? parsedQty : 1,
+          // Sécurité — si le modèle renvoie une unité hors de notre liste
+          // connue, on retombe sur "pièce(s)" plutôt que de laisser passer
+          // une valeur qui casserait le <Select> du formulaire
+          unit: UNITS.includes(c.unit) ? c.unit : 'pièce(s)',
+          // "basse" = texte OCR probablement corrompu, le modèle n'a pas
+          // pu identifier un vrai produit — à vérifier avant de faire
+          // confiance aux autres champs (catégorie, stockage...)
+          confianceNom: c.confiance === 'basse' ? 'basse' : 'haute',
+        }
+      })
+    } catch {
+      // Échec de la classification — pas grave, on continue avec les
+      // données brutes plutôt que de bloquer tout le scan pour cette
+      // étape optionnelle
+      return lignes
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // MATCHING PARTAGÉ — cache local uniquement, plus de recherche OFF
+  // automatique en masse
+  // ═══════════════════════════════════════════════════════════════
+  // Chaque ligne arrive déjà classifiée (nom propre, catégorie, stockage,
+  // quantité, unité) via cleanupLigneNames — elle est DIRECTEMENT
+  // importable sans avoir besoin d'une fiche Open Food Facts. Le cache
+  // (perso + partagé) reste consulté en priorité car il est gratuit et
+  // enrichit avec une vraie photo/nom officiel quand disponible — mais
+  // ce n'est plus un passage obligé, juste un bonus quand il y a un hit.
+  //
+  // La recherche OFF en direct n'a plus lieu ici du tout — elle devient
+  // une action ponctuelle, à la demande, par ligne (voir searchOffForLine),
+  // ce qui supprime le problème de la limite de débit d'Open Food Facts
+  // (10 requêtes/minute) qu'on ne peut plus cogner puisqu'on ne l'appelle
+  // plus automatiquement pour un ticket entier.
+  async function matchLinesToProducts(lignes) {
+    let cacheHits = 0
+
+    const items = (lignes || []).map((ligne) => {
+      const searchKey = ligne.nom_propre || ligne.texte_brut
+      // On tente le nom propre en priorité (plus lisible = souvent
+      // mieux reconnu par le cache constitué via scans code-barres),
+      // avec repli sur le texte brut pour les entrées de cache plus
+      // anciennes qui auraient été indexées avant ce nettoyage.
+      const cached = getFromCache(searchKey, null) || getFromCache(ligne.texte_brut, null)
+
+      if (cached) {
+        cacheHits++
+        return {
+          ...ligne,
+          selected: true,
+          // Le cache peut affiner le nom/catégorie si la classification
+          // GPT était moins précise, mais garde le stockage classifié
+          // (le cache ne connaît pas forcément ton organisation de frigo)
+          nom_propre: cached.name || ligne.nom_propre,
+          category: cached.category || ligne.category,
+          image: cached.image || null,
+          barcode: cached.barcode || null,
+          fromCache: true,
+        }
+      }
+
+      return { ...ligne, selected: true, fromCache: false }
+    })
+
+    return { items, cacheHits, total: lignes?.length || 0 }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // IMPORT PDF — commande drive (Leclerc, Carrefour, Auchan...)
+  // ═══════════════════════════════════════════════════════════════
+  // Contrairement à la photo de ticket, le PDF contient déjà du texte
+  // numérique propre — pas besoin de vision/OCR. On extrait le texte
+  // directement (fiable à 100%), puis on demande à l'IA de le
+  // structurer en lignes produit (même format que le scan ticket),
+  // avant de passer par le même moteur de matching (cache + OFF).
+  const importDrivePdf = async (file) => {
     if (!file) return
-    setScanLoading(true)
+    setPdfLoading(true)
     setScanResult(null)
-    setScanConfirm(null)
-    setScanPhases({ haute: [], moyenne: [], basse: [] })
+    setScanPhases({ items: [] })
     setShowScanPanel(true)
 
     try {
-      const base64 = await compressImage(file)
-      const continuityContext =
-        lastTicketItems.length > 0
-          ? `\nCONTINUATION : Cette photo fait suite à une précédente.
-         Les derniers articles de la photo précédente étaient :
-         ${lastTicketItems.map((i) => i.texte_brut).join(', ')}.
-         Ne les répète PAS — commence à partir des articles qui suivent.`
-          : ''
-      const prompt = `Tu es un OCR spécialisé tickets de caisse français.
+      // Extraction texte via pdf.js — 100% côté client, aucune donnée envoyée
+      const pdfjsLib = await import('pdfjs-dist')
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+        'pdfjs-dist/build/pdf.worker.mjs',
+        import.meta.url
+      ).toString()
 
-  Extrais TOUTES les lignes de produits. RÈGLES STRICTES :
-  - Copie le texte du ticket le plus fidèlement possible, NE L'INTERPRÈTE PAS
-  - Garde les abréviations telles quelles (ex: "TH.ENT.LISTAO NAT" pas "Thon entier")
-  - Inclus le poids/volume si visible
-  - Inclus le prix
-  - Ignore : numéros de caisse, totaux, remises globales, TVA
-  ${continuityContext}
+      const arrayBuffer = await file.arrayBuffer()
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
 
-  Réponds UNIQUEMENT en JSON valide :
-  {
-    "enseigne": "E.Leclerc",
-    "lieu": "Conflans",
-    "date": "2026-05-22",
-    "lignes": [
-      {
-        "texte_brut": "TRANIER,OLIV.VTES -25% SEL,160G",
-        "prix": 1.96,
-        "poids": "160g",
-        "section": "EPICERIE SALEE",
-        "type": "alimentaire",
-        "confiance": "haute"
-      },
-      {
-        "texte_brut": "ECO+,TH.ENT.LISTAO NAT,140G",
-        "prix": 1.32,
-        "poids": "140g",
-        "section": "EPICERIE SALEE",
-        "type": "alimentaire",
-        "confiance": "basse"
+      let fullText = ''
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i)
+        const content = await page.getTextContent()
+        fullText += content.items.map((it) => it.str).join(' ') + '\n'
       }
-    ]
-  }
 
-  Niveaux de confiance :
-  - "haute" : nom clair et complet, peu d'abréviations
-  - "moyenne" : quelques abréviations mais déchiffrable
-  - "basse" : fortement abrégé ou illisible
-  Type : "alimentaire" ou "non_alimentaire"`
+      if (!fullText.trim()) {
+        // PDF lu techniquement, mais aucune couche de texte trouvée —
+        // presque toujours signe d'un PDF scanné/capture d'écran plutôt
+        // qu'un export numérique natif. Différent d'une erreur technique.
+        setScanResult({ error: true, pdfNoText: true })
+        setPdfLoading(false)
+        return
+      }
 
-      const res = await fetch('/gardemanger/api-proxy.php', {
+      // Structuration du texte brut en lignes produit — prompt texte
+      // uniquement (pas de vision), donc plus rapide et moins cher
+      const prompt = `Tu reçois le texte brut extrait d'une commande drive (supermarché en ligne).
+Ce texte peut être mal formaté (colonnes fusionnées, espaces multiples) car extrait automatiquement d'un PDF.
+
+Ta mission : identifier chaque article commandé avec son prix.
+
+RÈGLES :
+- Une ligne = un article avec son prix associé
+- Ignore : sous-total, frais de livraison, total, TVA, informations de compte/adresse
+- Si une quantité est indiquée (ex: "x2", "2 unités"), garde-la dans le texte
+- Copie le texte le plus fidèlement possible — ne cherche pas à le nettoyer,
+  ça sera fait dans une étape séparée
+
+Texte du PDF :
+---
+${fullText.slice(0, 6000)}
+---
+
+Réponds UNIQUEMENT en JSON valide :
+{
+  "enseigne": "Nom du drive si identifiable, sinon null",
+  "lieu": null,
+  "date": "date de commande si visible, sinon null",
+  "lignes": [
+    { "texte_brut": "Nom exact de l'article", "prix": 3.45, "poids": "500g", "section": null }
+  ]
+}`
+
+      const res = await fetch('/app/api-proxy.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           proxy_token: 'lgm_2024_xK9mP3',
           model: 'gpt-4o-mini',
           max_tokens: 4000,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'image',
-                  source: { type: 'base64', media_type: file.type || 'image/jpeg', data: base64 },
-                },
-                { type: 'text', text: prompt },
-              ],
-            },
-          ],
+          messages: [{ role: 'user', content: prompt }],
         }),
       })
       const data = await res.json()
       const text = data.content?.map((b) => b.text || '').join('') || ''
       const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
 
+      setScanResult({
+        enseigne: parsed.enseigne || 'Commande Drive',
+        lieu: parsed.lieu,
+        date: parsed.date,
+      })
+      setPdfLoading(false)
+
+      // Classification — cette étape manquait entièrement avant, d'où le
+      // mélange alimentaire/non-alimentaire et le "tout au garde-manger"
+      parsed.lignes = await cleanupLigneNames(parsed.lignes)
+
+      setOffLoading(true)
+      const { items, cacheHits } = await matchLinesToProducts(parsed.lignes)
+
+      setScanPhases({ items })
+      setOffLoading(false)
+      setScanResult((r) => ({ ...r, cacheHits }))
+    } catch (e) {
+      console.error('Erreur import PDF:', e)
+      setScanResult({ error: true, pdfTechnicalError: e?.message || 'inconnue' })
+      setPdfLoading(false)
+      setOffLoading(false)
+    }
+  }
+
+  const scanTicket = async (file) => {
+    if (!file) return
+
+    // Garde d'authentification — sans ça, un scan lancé juste après un
+    // rechargement de page (avant que Firebase Auth ait fini de
+    // restaurer la session en arrière-plan) part SANS token valide,
+    // la Cloud Function le rejette silencieusement côté serveur, et
+    // l'utilisateur voit juste "erreur" sans comprendre pourquoi.
+    if (authLoading) {
+      setScanResult({ error: true, authNotReady: true })
+      setShowScanPanel(true)
+      return
+    }
+    if (!isAuthenticated) {
+      setScanResult({ error: true, needsAuth: true })
+      setShowScanPanel(true)
+      return
+    }
+
+    setScanLoading(true)
+    setScanResult(null)
+    setScanConfirm(null)
+    setScanPhases({ items: [] })
+    setShowScanPanel(true)
+
+    try {
+      const base64 = await compressImage(file)
+
+      /* ═══════════════════════════════════════════════════════════════
+         ANCIEN PROMPT (v1 puis v2) — conservé pour référence, ne plus
+         utiliser. GPT-4o-mini vision servait à l'OCR du ticket, mais
+         un modèle vision généraliste n'est pas fait pour du texte
+         thermique dense — trop de lignes sautées, trop d'erreurs.
+
+         v1 avait aussi un bug de fond : les lignes "haute confiance"
+         étaient importées sans jamais interroger Open Food Facts.
+
+         REMPLACÉ (v3) PAR : Google Document AI — Expense Parser,
+         un processeur spécifiquement entraîné sur les tickets de
+         caisse, appelé via Cloud Function (voir functions/index.js).
+         Plus de prompt à écrire : Document AI retourne directement
+         des champs structurés (article, prix, enseigne, date) avec un
+         score de confiance par champ.
+
+      const continuityContext = ...
+      const prompt = `Tu es un OCR spécialisé tickets de caisse français. ...`
+      const res = await fetch('/app/api-proxy.php', { ... model: 'gpt-4o-mini' ... })
+      ═══════════════════════════════════════════════════════════════ */
+
+      const parseReceipt = httpsCallable(functions, 'parseReceiptWithDocumentAI')
+
+      const response = await parseReceipt({
+        imageBase64: base64,
+        mimeType: file.type || 'image/jpeg',
+      })
+      const parsed = response.data
+
       setScanResult({ enseigne: parsed.enseigne, lieu: parsed.lieu, date: parsed.date })
       setScanLoading(false)
 
-      // Phase 2 — Open Food Facts pour moyenne et basse
-      setOffLoading(true)
-      const haute = [],
-        moyenne = [],
-        basse = []
+      // Nettoyage des noms — étape séparée de la recherche OFF (voir
+      // commentaire sur cleanupLigneNames). Se fait AVANT le matching.
+      parsed.lignes = await cleanupLigneNames(parsed.lignes)
 
-      for (const ligne of parsed.lignes || []) {
-        if (ligne.confiance === 'haute') {
-          haute.push({ ...ligne, selected: true, candidats: null, selected_candidat: 0 })
-        } else {
-          const candidats = await searchProduct(ligne.texte_brut)
-          const item = { ...ligne, selected: true, candidats, selected_candidat: 0 }
-          if (candidats?.length) {
-            moyenne.push(item)
-          } else {
-            basse.push(item)
-          }
-        }
-      }
-      const hauteDedup = detectDoublons(haute, lastTicketItems)
-      setScanPhases({ haute: hauteDedup, moyenne, basse })
+      setOffLoading(true)
+      const { items, cacheHits } = await matchLinesToProducts(parsed.lignes)
+
+      const itemsDedup = detectDoublons(items, lastTicketItems)
+      setScanPhases({ items: itemsDedup })
       const derniersArticles = parsed.lignes?.slice(-3) || []
       setLastTicketItems(derniersArticles)
       setPhotoCount((p) => p + 1)
       setOffLoading(false)
+
+      // Toujours afficher combien de lignes viennent du cache local —
+      // c'est le signal que le système s'améliore avec l'usage.
+      setScanResult((r) => ({ ...r, cacheHits }))
     } catch (e) {
       setScanResult({ error: true })
       setScanLoading(false)
@@ -813,7 +1540,7 @@ export default function App() {
     setLastTicketItems([])
     setPhotoCount(0)
   }
-  const compressImage = (file, maxWidth = 1200) =>
+  const compressImage = (file, maxWidth = 2400) =>
     new Promise((resolve) => {
       const reader = new FileReader()
       reader.onload = (e) => {
@@ -824,7 +1551,7 @@ export default function App() {
           canvas.width = img.width * ratio
           canvas.height = img.height * ratio
           canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
-          const compressed = canvas.toDataURL('image/jpeg', 0.7).split(',')[1]
+          const compressed = canvas.toDataURL('image/jpeg', 0.92).split(',')[1]
           resolve(compressed)
         }
         img.src = e.target.result
@@ -895,7 +1622,7 @@ Réponds UNIQUEMENT en JSON valide :
 
 Statuts : "disponible", "substituable", "manquant"`
 
-      const res = await fetch('/gardemanger/api-proxy.php', {
+      const res = await fetch('/app/api-proxy.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -925,7 +1652,120 @@ Statuts : "disponible", "substituable", "manquant"`
     }
     setRecipeAnalysisLoading(false)
   }
+  const analyzeRecipeText = async (input) => {
+    if (!input.trim()) return
+    setRecipeAnalysisLoading(true)
+    setRecipeAnalysisResult(null)
+    setShowRecipeAnalysis(true)
+    setShowRecipeTextInput(false)
 
+    try {
+      const inventaire =
+        ingredients.map((i) => `${i.name} (${i.quantity}${i.unit})`).join(', ') || 'Inventaire vide'
+
+      // Étape 1 — classification
+      const classPrompt = `Analyse ce texte et réponds UNIQUEMENT en JSON :
+  {
+    "type": "recette" | "lien_externe" | "rien",
+    "url_trouvee": "https://..." ou null,
+    "contenu_recette": "texte de la recette si type=recette" ou null
+  }
+
+  Texte :
+  ---
+  ${input}
+  ---`
+
+      const res1 = await fetch('/app/api-proxy.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proxy_token: 'lgm_2024_xK9mP3',
+          model: 'gpt-4o-mini',
+          max_tokens: 500,
+          temperature: 0,
+          messages: [{ role: 'user', content: classPrompt }],
+        }),
+      })
+      const d1 = await res1.json()
+      const classified = JSON.parse(
+        d1.content
+          ?.map((b) => b.text || '')
+          .join('')
+          .replace(/```json\n?|```/g, '')
+          .trim()
+      )
+
+      let recipeText = null
+
+      if (classified.type === 'rien') {
+        setRecipeAnalysisResult({ error: true, message: 'Aucune recette trouvée dans ce texte.' })
+        setRecipeAnalysisLoading(false)
+        return
+      }
+
+      if (classified.type === 'lien_externe' && classified.url_trouvee) {
+        // Fetch le lien
+        const res2 = await fetch('/app/api-proxy.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            proxy_token: 'lgm_2024_xK9mP3',
+            model: 'gpt-4o-mini',
+            max_tokens: 1000,
+            temperature: 0,
+            messages: [
+              {
+                role: 'user',
+                content: `Fetch et résume la recette sur cette URL : ${classified.url_trouvee}\nRéponds avec juste le texte de la recette (ingrédients + étapes).`,
+              },
+            ],
+          }),
+        })
+        const d2 = await res2.json()
+        recipeText = d2.content?.map((b) => b.text || '').join('') || ''
+      } else {
+        recipeText = classified.contenu_recette || input
+      }
+
+      // Étape 2 — extraction ingrédients
+      const extractPrompt = `Tu es un chef cuisinier. Voici une recette :
+  ---
+  ${recipeText}
+  ---
+
+  INVENTAIRE DISPONIBLE : ${inventaire}
+
+  Analyse et réponds UNIQUEMENT en JSON valide :
+  {
+    "nom_recette": "Nom",
+    "portions_recette": 4,
+    "ingredients": [
+      { "nom": "Œufs", "quantite_recette": "3", "quantite_course": "6", "unite": "pièce(s)", "statut": "disponible"|"substituable"|"manquant", "note": "...", "note_quantite": "..." }
+    ],
+    "conseil_chef": "..."
+  }`
+
+      const res3 = await fetch('/app/api-proxy.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proxy_token: 'lgm_2024_xK9mP3',
+          model: 'gpt-4o-mini',
+          max_tokens: 2000,
+          temperature: 0,
+          messages: [{ role: 'user', content: extractPrompt }],
+        }),
+      })
+      const d3 = await res3.json()
+      const text3 = d3.content?.map((b) => b.text || '').join('') || ''
+      const parsed = JSON.parse(text3.replace(/```json\n?|```/g, '').trim())
+      setRecipeAnalysisResult(parsed)
+    } catch {
+      setRecipeAnalysisResult({ error: true })
+    }
+    setRecipeAnalysisLoading(false)
+  }
   const addSingleToShoppingList = (ing) => {
     setShoppingLists((p) => {
       // Cherche une liste "Recette en cours" existante ou en crée une
@@ -1058,7 +1898,18 @@ Statuts : "disponible", "substituable", "manquant"`
       ].slice(0, 50)
     ) // garde 50 repas max
   }
-
+  const saveRecipe = (recipe, source = 'ia') => {
+    const already = savedRecipes.find((r) => r.nom === recipe.nom)
+    if (already) {
+      setSavedRecipes((p) => p.filter((r) => r.nom !== recipe.nom))
+    } else {
+      setSavedRecipes((p) => [
+        { ...recipe, id: `saved_${Date.now()}`, source, savedAt: new Date().toISOString() },
+        ...p,
+      ])
+    }
+  }
+  const isRecipeSaved = (nom) => savedRecipes.some((r) => r.nom === nom)
   const getPortions = (recipe) => recipePortions[recipe.id] || recipe.portions || 2
   const setPortions = (recipeId, basePortions, val) => {
     const clamped = Math.max(1, Math.min(20, val))
@@ -1096,6 +1947,7 @@ Statuts : "disponible", "substituable", "manquant"`
         return `${i.name} (${i.quantity}${i.unit}${urgent ? ' ⚠️URGENT' : ''})`
       })
       .join('\n')
+    // Taux de tolérance
 
     // Profils convives enrichis
     const convivesContext =
@@ -1170,7 +2022,15 @@ Statuts : "disponible", "substituable", "manquant"`
     const videContext = modeVideFrigo
       ? '\n\nMODE VIDE-FRIGO : PRIORITÉ ABSOLUE aux ingrédients marqués ⚠️URGENT. Utilise-les tous si possible.'
       : ''
-
+    // Taux de tolérance
+    const toleranceContext = {
+      strict:
+        '\n\nCONTRAINTE STRICTE : Utilise UNIQUEMENT les ingrédients disponibles. Aucun ingrédient manquant autorisé.',
+      un: '\n\nTOLÉRANCE +1 : Tu peux proposer des recettes avec AU MAXIMUM 1 ingrédient manquant. Indique-le clairement.',
+      deux: '\n\nTOLÉRANCE +2-3 : Tu peux proposer des recettes avec 2 à 3 ingrédients manquants maximum. Indique-les clairement.',
+      libre:
+        '\n\nMODE LIBRE : Propose les meilleures recettes possibles avec ou sans ingrédients manquants. Indique ce qui manque.',
+    }[tolerance]
     // Saison
     const seasonContext = `\n\nSAISON : ${season.label}. Légumes/fruits de saison à privilégier : ${season.hint}.`
 
@@ -1184,7 +2044,7 @@ ${ingList}
 ÉQUIPEMENT : ${eqList}
 NIVEAU D'ÉNERGIE : ${eLvl}
 TEMPS DISPONIBLE : ${timeAvail} minutes
-OBJECTIFS : ${objList}${convivesContext}${historyContext}${ratingContext}${cookContext}${soireeContext}${budgetContext}${videContext}${seasonContext}
+OBJECTIFS : ${objList}${convivesContext}${historyContext}${ratingContext}${cookContext}${soireeContext}${budgetContext}${videContext}${toleranceContext}${seasonContext}
 
 Génère exactement 3 recettes pour ${portions} personnes. ${modeSoiree ? 'Une entrée, un plat, un dessert.' : ''}
 Réponds UNIQUEMENT en JSON valide :
@@ -1215,7 +2075,7 @@ Réponds UNIQUEMENT en JSON valide :
 }`
 
     try {
-      const res = await fetch('/gardemanger/api-proxy.php', {
+      const res = await fetch('/app/api-proxy.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-proxy-token': 'lgm_2024_xK9mP3' },
         body: JSON.stringify({
@@ -1279,7 +2139,7 @@ Propose une adaptation immédiate, simple, en gardant le même esprit de plat. R
   "conseil": "Un conseil de chef pour réussir malgré tout"
 }`
     try {
-      const res = await fetch('/gardemanger/api-proxy.php', {
+      const res = await fetch('/app/api-proxy.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-proxy-token': 'lgm_2024_xK9mP3' },
         body: JSON.stringify({
@@ -1429,7 +2289,7 @@ ${convivesInfo}
 
 REPAS DES 7 DERNIERS JOURS (évite les répétitions) :
 ${historyInfo}
-
+TOLÉRANCE INGRÉDIENTS MANQUANTS : ${toleranceContext}
 SAISON ACTUELLE : ${season.label} — privilégie : ${season.hint}
 
 RÈGLES IMPORTANTES :
@@ -1466,7 +2326,7 @@ Réponds UNIQUEMENT en JSON valide :
   ]
 }`
     try {
-      const res = await fetch('/gardemanger/api-proxy.php', {
+      const res = await fetch('/app/api-proxy.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-proxy-token': 'lgm_2024_xK9mP3' },
         body: JSON.stringify({
@@ -1519,6 +2379,7 @@ Réponds UNIQUEMENT en JSON valide :
       fontWeight: 900,
       color: C.brown,
       letterSpacing: '-0.5px',
+      fontStyle: 'italic',
     },
     sub: { fontSize: '11px', color: C.textLight, marginTop: '2px', fontStyle: 'italic' },
     tabs: {
@@ -1617,6 +2478,46 @@ Réponds UNIQUEMENT en JSON valide :
   const renderFrigo = () => (
     <>
       <div style={st.content}>
+        {!isAuthenticated && (
+          <div
+            style={{
+              padding: '12px 14px',
+              background: `${C.brown}12`,
+              border: `1px solid ${C.brown}40`,
+              borderRadius: '12px',
+              marginBottom: '12px',
+              fontSize: '12px',
+              color: C.brown,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <span>
+              🔐 Connecte-toi pour voir et modifier ton frigo — tes ingrédients sont maintenant
+              synchronisés entre tes appareils.
+            </span>
+            <button
+              onClick={login}
+              style={{
+                background: C.brown,
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '6px 14px',
+                fontSize: '11px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                flexShrink: 0,
+              }}
+            >
+              Se connecter
+            </button>
+          </div>
+        )}
+
         {urgentIngs.length > 0 && (
           <div style={st.urgentBar}>
             ⚠️{' '}
@@ -1654,7 +2555,7 @@ Réponds UNIQUEMENT en JSON valide :
           ))}
         </div>
 
-        {/* Scan ticket */}
+        {/* Scan ticket + Import PDF drive */}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
           <button
             onClick={() => setShowTicketCamera(true)}
@@ -1679,10 +2580,8 @@ Réponds UNIQUEMENT en JSON valide :
               Scanner un ticket
             </span>
           </button>
-          <button
-            onClick={() => {
-              setShowFrigoBarcode(true)
-            }}
+
+          <label
             style={{
               flex: 1,
               display: 'flex',
@@ -1697,13 +2596,23 @@ Réponds UNIQUEMENT en JSON valide :
               cursor: 'pointer',
               fontFamily: "'Lato',sans-serif",
               WebkitTapHighlightColor: 'transparent',
+              position: 'relative',
             }}
           >
-            <span style={{ fontSize: '22px' }}>📦</span>
+            <span style={{ fontSize: '22px' }}>📄</span>
             <span style={{ fontSize: '12px', fontWeight: 700, color: C.brown }}>
-              Scanner un produit
+              Commande drive (PDF)
             </span>
-          </button>
+            <input
+              type='file'
+              accept='application/pdf'
+              style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
+              onChange={(e) => {
+                if (e.target.files?.[0]) importDrivePdf(e.target.files[0])
+                e.target.value = ''
+              }}
+            />
+          </label>
         </div>
 
         {fridgeSubTab === 'food' ? (
@@ -1721,7 +2630,11 @@ Réponds UNIQUEMENT en JSON valide :
                 variant='outline'
                 small
                 onClick={() => {
-                  setShowAddIng(!showAddIng)
+                  if (showAddIng) {
+                    cancelIngredientForm()
+                  } else {
+                    setShowAddIng(true)
+                  }
                   setLastTicketItems([])
                   setPhotoCount(0)
                 }}
@@ -1732,17 +2645,50 @@ Réponds UNIQUEMENT en JSON valide :
 
             {showAddIng && (
               <Card accent style={{ marginBottom: '12px' }}>
-                <div style={{ marginBottom: '8px' }}>
-                  <Input
-                    placeholder="Nom de l'ingrédient *"
-                    value={newIng.name}
-                    onChange={(v) => setNewIng((p) => ({ ...p, name: v }))}
-                  />
+                {editingIngredientId && (
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      color: C.terra,
+                      marginBottom: '10px',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}
+                  >
+                    ✏️ Modification de l'ingrédient
+                  </div>
+                )}
+                <div
+                  style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <Input
+                      placeholder="Nom de l'ingrédient *"
+                      value={newIng.name}
+                      onChange={(v) => setNewIng((p) => ({ ...p, name: v }))}
+                    />
+                  </div>
+                  <button
+                    onClick={() => setShowFrigoBarcode(true)}
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      background: `${C.brown}15`,
+                      border: `1px solid ${C.brown}40`,
+                      color: C.brown,
+                      cursor: 'pointer',
+                      fontSize: '18px',
+                      flexShrink: 0,
+                    }}
+                  >
+                    📷
+                  </button>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '4px' }}>
                   <div style={{ flex: 2 }}>
                     <Input
-                      placeholder='Quantité'
+                      placeholder='Quantité (ex: 125)'
                       value={newIng.quantity}
                       onChange={(v) => setNewIng((p) => ({ ...p, quantity: v }))}
                     />
@@ -1756,6 +2702,18 @@ Réponds UNIQUEMENT en JSON valide :
                         <option key={u}>{u}</option>
                       ))}
                     </Select>
+                  </div>
+                </div>
+                <div style={{ marginBottom: '8px' }}>
+                  <Input
+                    placeholder="Nombre d'unités (optionnel)"
+                    value={newIng.unitCount}
+                    onChange={(v) =>
+                      setNewIng((p) => ({ ...p, unitCount: v.replace(/[^\d]/g, '') }))
+                    }
+                  />
+                  <div style={{ fontSize: '10px', color: C.textLight, marginTop: '3px' }}>
+                    Ex : 8 pour "8 yaourts de 125g". Laisse vide pour un seul contenant.
                   </div>
                 </div>
                 <div style={{ marginBottom: '8px' }}>
@@ -1790,7 +2748,19 @@ Réponds UNIQUEMENT en JSON valide :
                     onChange={(v) => setNewIng((p) => ({ ...p, dlc: v }))}
                   />
                 </div>
-                <Btn onClick={addIngredient}>✓ Ajouter</Btn>
+                <div style={{ fontSize: '11px', color: C.textLight, marginBottom: '4px' }}>
+                  Prix payé (optionnel — alimente l'estimation des courses)
+                </div>
+                <div style={{ marginBottom: '10px' }}>
+                  <Input
+                    placeholder='ex: 2.50'
+                    value={newIng.price}
+                    onChange={(v) => setNewIng((p) => ({ ...p, price: v.replace(',', '.') }))}
+                  />
+                </div>
+                <Btn onClick={addIngredient}>
+                  {editingIngredientId ? '✓ Modifier' : '✓ Ajouter'}
+                </Btn>
               </Card>
             )}
 
@@ -1850,11 +2820,34 @@ Réponds UNIQUEMENT en JSON valide :
                             flexWrap: 'wrap',
                           }}
                         >
-                          <Pill label={`${ing.quantity}${ing.unit}`} color={C.textLight} />
+                          <Pill
+                            label={
+                              ing.unitCount
+                                ? `${ing.unitCount} × ${ing.quantity}${ing.unit}`
+                                : `${ing.quantity}${ing.unit}`
+                            }
+                            color={C.textLight}
+                          />
                           <Pill label={ing.category} color={C.brownLight} />
                           {st2 && <Pill label={`${st2.icon} ${st2.label}`} color={st2.color} />}
+                          {ing.price && <Pill label={`${ing.price}€`} color={C.green} />}
                         </div>
                       </div>
+                      <button
+                        onClick={() => editIngredient(ing)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: C.textLight,
+                          cursor: 'pointer',
+                          fontSize: '15px',
+                          padding: '4px',
+                          flexShrink: 0,
+                        }}
+                        title='Modifier'
+                      >
+                        ✏️
+                      </button>
                       <button
                         onClick={() => setIngredients((p) => p.filter((x) => x.id !== ing.id))}
                         style={{
@@ -1963,9 +2956,11 @@ Réponds UNIQUEMENT en JSON valide :
                 boxShadow: `0 -8px 32px ${C.brown}30`,
               }}
             >
-              {scanLoading ? (
+              {scanLoading || pdfLoading ? (
                 <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                  <div style={{ fontSize: '32px', marginBottom: '12px' }}>🧾</div>
+                  <div style={{ fontSize: '32px', marginBottom: '12px' }}>
+                    {pdfLoading ? '📄' : '🧾'}
+                  </div>
                   <div
                     style={{
                       fontFamily: "'Playfair Display',serif",
@@ -1974,19 +2969,75 @@ Réponds UNIQUEMENT en JSON valide :
                       marginBottom: '6px',
                     }}
                   >
-                    Lecture du ticket...
+                    {pdfLoading ? 'Lecture de la commande...' : 'Lecture du ticket...'}
                   </div>
                   <div style={{ fontSize: '12px', color: C.textLight }}>Extraction en cours</div>
                 </div>
               ) : scanResult?.error ? (
                 <div style={{ textAlign: 'center', padding: '32px 0' }}>
-                  <div style={{ fontSize: '30px', marginBottom: '8px' }}>❌</div>
-                  <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
-                    Impossible de lire ce ticket.
+                  <div style={{ fontSize: '30px', marginBottom: '8px' }}>
+                    {scanResult.authNotReady || scanResult.needsAuth ? '🔐' : '❌'}
                   </div>
-                  <Btn variant='outline' onClick={() => setShowScanPanel(false)}>
-                    Fermer
-                  </Btn>
+                  <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
+                    {scanResult.authNotReady ? (
+                      <>
+                        Ta session se charge encore.
+                        <br />
+                        <span style={{ fontSize: '11px', color: C.textLight }}>
+                          Patiente 1-2 secondes après avoir ouvert l'app, puis réessaie de scanner.
+                        </span>
+                      </>
+                    ) : scanResult.needsAuth ? (
+                      <>
+                        Connecte-toi pour scanner un ticket.
+                        <br />
+                        <span style={{ fontSize: '11px', color: C.textLight }}>
+                          Le scan a besoin d'un compte pour appeler Document AI en toute sécurité.
+                        </span>
+                      </>
+                    ) : scanResult.pdfNoText ? (
+                      <>
+                        Aucun texte trouvé dans ce PDF.
+                        <br />
+                        <span style={{ fontSize: '11px', color: C.textLight }}>
+                          C'est probablement une image/capture d'écran collée dans un PDF, pas un
+                          export numérique — le texte n'existe pas à l'intérieur du fichier.
+                        </span>
+                      </>
+                    ) : scanResult.pdfTechnicalError ? (
+                      <>
+                        Erreur technique pendant la lecture du PDF.
+                        <br />
+                        <span
+                          style={{
+                            fontSize: '10px',
+                            color: C.textLight,
+                            fontFamily: 'monospace',
+                          }}
+                        >
+                          {scanResult.pdfTechnicalError}
+                        </span>
+                      </>
+                    ) : (
+                      'Impossible de lire ce ticket.'
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                    {scanResult.needsAuth && (
+                      <Btn
+                        variant='green'
+                        onClick={() => {
+                          setShowScanPanel(false)
+                          login()
+                        }}
+                      >
+                        Se connecter
+                      </Btn>
+                    )}
+                    <Btn variant='outline' onClick={() => setShowScanPanel(false)}>
+                      Fermer
+                    </Btn>
+                  </div>
                 </div>
               ) : (
                 <>
@@ -2020,224 +3071,253 @@ Réponds UNIQUEMENT en JSON valide :
                     </div>
                   )}
 
-                  {/* Stats */}
-                  {!offLoading && (
-                    <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                      {[
-                        { label: '✅ Reconnus', count: scanPhases.haute.length, color: C.green },
-                        {
-                          label: '🔍 À confirmer',
-                          count: scanPhases.moyenne.length,
-                          color: '#d4a017',
-                        },
-                        { label: '❓ Inconnus', count: scanPhases.basse.length, color: C.terra },
-                      ].map((s) => (
-                        <div
-                          key={s.label}
-                          style={{
-                            flex: 1,
-                            textAlign: 'center',
-                            padding: '8px 4px',
-                            borderRadius: '10px',
-                            background: s.color + '15',
-                            border: `1px solid ${s.color}30`,
-                          }}
-                        >
-                          <div style={{ fontSize: '18px', fontWeight: 800, color: s.color }}>
-                            {s.count}
-                          </div>
-                          <div style={{ fontSize: '9px', color: s.color, fontWeight: 600 }}>
-                            {s.label}
-                          </div>
-                        </div>
-                      ))}
+                  {/* Stat unique — plus de 3 catégories, chaque ligne est déjà importable */}
+                  {!offLoading && scanPhases.items.length > 0 && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '10px 14px',
+                        marginBottom: '14px',
+                        borderRadius: '10px',
+                        background: `${C.green}10`,
+                        border: `1px solid ${C.green}25`,
+                      }}
+                    >
+                      <span style={{ fontSize: '12px', color: C.green, fontWeight: 600 }}>
+                        {scanPhases.items.length} article{scanPhases.items.length > 1 ? 's' : ''}{' '}
+                        prêt{scanPhases.items.length > 1 ? 's' : ''} à importer
+                      </span>
+                      {scanResult?.cacheHits > 0 && (
+                        <span style={{ fontSize: '11px', color: C.textLight }}>
+                          ⚡ {scanResult.cacheHits} depuis ton historique
+                        </span>
+                      )}
                     </div>
                   )}
 
-                  {/* ✅ Haute confiance */}
-                  {scanPhases.haute.length > 0 && (
+                  {/* Liste unique — chaque ligne déjà classifiée (nom, catégorie,
+                      stockage, quantité, unité) et directement importable */}
+                  {scanPhases.items.length > 0 && (
                     <div style={{ marginBottom: '14px' }}>
-                      <SectionLabel>✅ Reconnus directement</SectionLabel>
-                      {scanPhases.haute.map((item, idx) => (
-                        <div
-                          key={idx}
-                          onClick={() =>
-                            setScanPhases((p) => ({
-                              ...p,
-                              haute: p.haute.map((x, i) =>
-                                i === idx ? { ...x, selected: !x.selected } : x
-                              ),
-                            }))
-                          }
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '10px',
-                            padding: '7px 0',
-                            borderBottom: `1px solid ${C.border}`,
-                            cursor: 'pointer',
-                            opacity: item.selected ? 1 : 0.5,
-                          }}
-                        >
+                      {scanPhases.items.map((item, idx) => {
+                        const storageInfo = STORAGE_TYPES.find((s) => s.id === item.storage)
+                        const isUncertain = item.confianceNom === 'basse'
+                        return (
                           <div
+                            key={idx}
                             style={{
-                              width: '18px',
-                              height: '18px',
-                              borderRadius: '5px',
-                              border: `2px solid ${item.selected ? C.green : C.border}`,
-                              background: item.selected ? C.green : 'transparent',
-                              flexShrink: 0,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
+                              padding: '10px 0',
+                              borderBottom: `1px solid ${C.border}`,
+                              opacity: item.selected ? 1 : 0.5,
                             }}
                           >
-                            {item.selected && (
-                              <span style={{ color: '#fff', fontSize: '11px' }}>✓</span>
-                            )}
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <span style={{ fontWeight: 600, fontSize: '13px', color: C.text }}>
-                              {item.texte_brut}
-                            </span>
-                            <span
-                              style={{ fontSize: '11px', color: C.textLight, marginLeft: '8px' }}
-                            >
-                              {item.poids}
-                            </span>
-                          </div>
-                          {item.prix && (
-                            <span style={{ fontSize: '11px', color: C.green }}>{item.prix}€</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* 🔍 Moyenne confiance — candidats OFF */}
-                  {scanPhases.moyenne.length > 0 && (
-                    <div style={{ marginBottom: '14px' }}>
-                      <SectionLabel>🔍 À confirmer</SectionLabel>
-                      {scanPhases.moyenne.map((item, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            marginBottom: '10px',
-                            padding: '10px',
-                            background: '#d4a01710',
-                            borderRadius: '12px',
-                            border: '1px solid #d4a01730',
-                          }}
-                        >
-                          <div
-                            style={{ fontSize: '11px', color: C.textLight, marginBottom: '6px' }}
-                          >
-                            Ticket :{' '}
-                            <span style={{ fontFamily: 'monospace' }}>{item.texte_brut}</span>
-                          </div>
-                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                            {item.candidats?.map((c, ci) => (
-                              <button
-                                key={ci}
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                              <div
                                 onClick={() =>
                                   setScanPhases((p) => ({
                                     ...p,
-                                    moyenne: p.moyenne.map((x, i) =>
-                                      i === idx
-                                        ? { ...x, selected_candidat: ci, selected: true }
-                                        : x
+                                    items: p.items.map((x, i) =>
+                                      i === idx ? { ...x, selected: !x.selected } : x
                                     ),
                                   }))
                                 }
                                 style={{
+                                  width: '18px',
+                                  height: '18px',
+                                  borderRadius: '5px',
+                                  border: `2px solid ${item.selected ? C.green : C.border}`,
+                                  background: item.selected ? C.green : 'transparent',
+                                  flexShrink: 0,
                                   display: 'flex',
                                   alignItems: 'center',
-                                  gap: '6px',
-                                  padding: '6px 8px',
-                                  borderRadius: '10px',
-                                  border:
-                                    item.selected_candidat === ci
-                                      ? `2px solid ${C.green}`
-                                      : `1px solid ${C.border}`,
-                                  background:
-                                    item.selected_candidat === ci ? `${C.green}15` : C.bgInset,
+                                  justifyContent: 'center',
                                   cursor: 'pointer',
+                                  marginTop: '2px',
                                 }}
                               >
-                                {c.image && (
-                                  <img
-                                    src={c.image}
-                                    style={{
-                                      width: '28px',
-                                      height: '28px',
-                                      objectFit: 'contain',
-                                      borderRadius: '4px',
-                                    }}
-                                  />
+                                {item.selected && (
+                                  <span style={{ color: '#fff', fontSize: '11px' }}>✓</span>
                                 )}
-                                <span style={{ fontSize: '11px', fontWeight: 600, color: C.text }}>
-                                  {c.nom} {c.poids}
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                              </div>
 
-                  {/* ❓ Basse confiance */}
-                  {scanPhases.basse.length > 0 && (
-                    <div style={{ marginBottom: '14px' }}>
-                      <SectionLabel>
-                        ❓ Non reconnus — à ignorer ou corriger manuellement
-                      </SectionLabel>
-                      {scanPhases.basse.map((item, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '10px',
-                            padding: '7px 0',
-                            borderBottom: `1px solid ${C.border}`,
-                          }}
-                        >
-                          <div style={{ flex: 1 }}>
-                            <span
+                              {item.image && (
+                                <img
+                                  src={item.image}
+                                  alt=''
+                                  style={{
+                                    width: '28px',
+                                    height: '28px',
+                                    objectFit: 'contain',
+                                    borderRadius: '4px',
+                                    flexShrink: 0,
+                                  }}
+                                />
+                              )}
+
+                              <div style={{ flex: 1 }}>
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    flexWrap: 'wrap',
+                                  }}
+                                >
+                                  <span
+                                    style={{ fontWeight: 600, fontSize: '13px', color: C.text }}
+                                  >
+                                    {item.nom_propre || item.texte_brut}
+                                  </span>
+                                  {isUncertain && (
+                                    <span
+                                      style={{
+                                        fontSize: '9px',
+                                        fontWeight: 700,
+                                        color: '#d4a017',
+                                        background: '#d4a01718',
+                                        padding: '2px 6px',
+                                        borderRadius: '999px',
+                                      }}
+                                      title='Le texte du ticket était difficile à lire — vérifie ce nom'
+                                    >
+                                      ⚠️ à vérifier
+                                    </span>
+                                  )}
+                                  {item.fromCache && (
+                                    <span
+                                      style={{ fontSize: '9px', color: C.green }}
+                                      title='Reconnu depuis ton historique'
+                                    >
+                                      ⚡
+                                    </span>
+                                  )}
+                                </div>
+
+                                {item.nom_propre && item.nom_propre !== item.texte_brut && (
+                                  <div
+                                    style={{
+                                      fontSize: '10px',
+                                      color: C.textLight,
+                                      fontFamily: 'monospace',
+                                      marginTop: '1px',
+                                    }}
+                                  >
+                                    Ticket : {item.texte_brut}
+                                  </div>
+                                )}
+
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    gap: '5px',
+                                    flexWrap: 'wrap',
+                                    marginTop: '5px',
+                                  }}
+                                >
+                                  <Pill label={item.category || 'Autre'} color={C.brownLight} />
+                                  {storageInfo && (
+                                    <Pill
+                                      label={`${storageInfo.icon} ${storageInfo.label}`}
+                                      color={storageInfo.color}
+                                    />
+                                  )}
+                                  <Pill
+                                    label={`${item.quantity || 1}${item.unit || 'pièce(s)'}`}
+                                    color={C.textLight}
+                                  />
+                                  {item.prix != null && (
+                                    <Pill label={`${item.prix}€`} color={C.green} />
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div
                               style={{
-                                fontSize: '12px',
-                                fontFamily: 'monospace',
-                                color: C.textMid,
+                                display: 'flex',
+                                gap: '6px',
+                                marginTop: '8px',
+                                marginLeft: '28px',
                               }}
                             >
-                              {item.texte_brut}
-                            </span>
-                            {item.prix && (
-                              <span style={{ fontSize: '11px', color: C.green, marginLeft: '8px' }}>
-                                {item.prix}€
-                              </span>
-                            )}
+                              <button
+                                onClick={() => openTicketLineEditor(idx)}
+                                style={{
+                                  flex: 1,
+                                  padding: '6px',
+                                  borderRadius: '10px',
+                                  border: `1px solid ${C.green}40`,
+                                  background: `${C.green}12`,
+                                  color: C.green,
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  fontFamily: "'Lato',sans-serif",
+                                }}
+                              >
+                                ✏️ Corriger
+                              </button>
+                              {!item.fromCache && (
+                                <button
+                                  onClick={() => searchOffForLine(idx)}
+                                  style={{
+                                    flex: 1,
+                                    padding: '6px',
+                                    borderRadius: '10px',
+                                    border: `1px solid ${C.brown}40`,
+                                    background: `${C.brown}12`,
+                                    color: C.brown,
+                                    fontSize: '11px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    fontFamily: "'Lato',sans-serif",
+                                  }}
+                                >
+                                  🔍 Chercher une fiche
+                                </button>
+                              )}
+                              <button
+                                onClick={() => {
+                                  setCurrentBarcodeTarget({ idx })
+                                  setShowBarcodeScanner(true)
+                                }}
+                                style={{
+                                  padding: '6px 10px',
+                                  borderRadius: '10px',
+                                  border: `1px solid ${C.border}`,
+                                  background: 'transparent',
+                                  color: C.textLight,
+                                  fontSize: '13px',
+                                  cursor: 'pointer',
+                                }}
+                                title='Scanner le code-barres pour une identification précise'
+                              >
+                                📷
+                              </button>
+                              <button
+                                onClick={() =>
+                                  setScanPhases((p) => ({
+                                    ...p,
+                                    items: p.items.filter((_, i) => i !== idx),
+                                  }))
+                                }
+                                style={{
+                                  padding: '6px 10px',
+                                  background: 'none',
+                                  border: 'none',
+                                  color: C.border,
+                                  cursor: 'pointer',
+                                  fontSize: '15px',
+                                }}
+                              >
+                                ×
+                              </button>
+                            </div>
                           </div>
-                          <button
-                            onClick={() =>
-                              setScanPhases((p) => ({
-                                ...p,
-                                basse: p.basse.filter((_, i) => i !== idx),
-                              }))
-                            }
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: C.border,
-                              cursor: 'pointer',
-                              fontSize: '16px',
-                            }}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   )}
 
@@ -2249,49 +3329,68 @@ Réponds UNIQUEMENT en JSON valide :
                       <Btn
                         variant='green'
                         onClick={() => {
-                          const today = new Date()
-                          // Import haute confiance sélectionnés
-                          ;[
-                            ...scanPhases.haute.filter((i) => i.selected),
-                            ...scanPhases.moyenne.filter((i) => i.selected),
-                          ].forEach((item) => {
-                            const nom =
-                              item.candidats?.[item.selected_candidat]?.nom || item.texte_brut
-                            if (item.type === 'alimentaire') {
-                              setIngredients((p) => [
-                                ...p,
-                                {
-                                  id: Date.now() + Math.random(),
+                          scanPhases.items
+                            .filter((i) => i.selected)
+                            .forEach((item) => {
+                              const nom = (item.nom_propre || item.texte_brut).trim()
+
+                              // Prix réel du ticket — enregistré dans l'historique pour
+                              // affiner les futures estimations de liste de courses
+                              if (item.prix) {
+                                recordPrice({
                                   name: nom,
-                                  quantity: '1',
-                                  unit: item.poids || 'pièce(s)',
-                                  category: 'Autre',
-                                  dlc: '',
-                                  storage: 'garde_manger',
-                                },
-                              ])
-                            } else {
-                              setNonFood((p) => [
-                                ...p,
-                                {
-                                  id: Date.now() + Math.random(),
+                                  barcode: item.barcode,
+                                  price: item.prix,
+                                  source: 'ticket',
+                                })
+                              }
+
+                              // Cache produit — sauf si déjà connu (évite d'écraser
+                              // une entrée déjà validée par une simple ré-apparition)
+                              if (!item.fromCache) {
+                                cacheProduct({
                                   name: nom,
-                                  quantity: '1',
-                                  unit: 'pièce(s)',
-                                  category: 'Autre maison',
-                                  prix: item.prix,
-                                },
-                              ])
-                            }
-                          })
+                                  barcode: item.barcode,
+                                  category: item.category || null,
+                                  image: item.image || null,
+                                  marque: '',
+                                  source: 'ticket',
+                                })
+                              }
+
+                              if (item.type === 'alimentaire') {
+                                setIngredients((p) => [
+                                  ...p,
+                                  {
+                                    id: Date.now() + Math.random(),
+                                    name: nom,
+                                    quantity: String(item.quantity || 1),
+                                    unit: item.unit || 'pièce(s)',
+                                    category: item.category || 'Autre',
+                                    dlc: '',
+                                    storage: item.storage || 'garde_manger',
+                                    price: item.prix ? String(item.prix) : '',
+                                  },
+                                ])
+                              } else {
+                                setNonFood((p) => [
+                                  ...p,
+                                  {
+                                    id: Date.now() + Math.random(),
+                                    name: nom,
+                                    quantity: String(item.quantity || 1),
+                                    unit: item.unit || 'pièce(s)',
+                                    category: item.category || 'Autre maison',
+                                    prix: item.prix,
+                                  },
+                                ])
+                              }
+                            })
                           setShowScanPanel(false)
-                          setScanPhases({ haute: [], moyenne: [], basse: [] })
+                          setScanPhases({ items: [] })
                         }}
                       >
-                        ✓ Importer (
-                        {scanPhases.haute.filter((i) => i.selected).length +
-                          scanPhases.moyenne.filter((i) => i.selected).length}
-                        )
+                        ✓ Importer ({scanPhases.items.filter((i) => i.selected).length})
                       </Btn>
                     </div>
                   </div>
@@ -2818,6 +3917,249 @@ Réponds UNIQUEMENT en JSON valide :
   // ── Recipes Tab ────────────────────────────────────────────────
   const renderRecettes = () => (
     <div style={st.content}>
+      {savedRecipes.length > 0 && (
+        <div style={{ marginBottom: '14px' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '10px',
+            }}
+          >
+            <SectionLabel>🔖 Mon carnet ({savedRecipes.length})</SectionLabel>
+          </div>
+          {savedRecipes.map((recipe, idx) => {
+            const open = expandedRecipe === `saved_${idx}`
+            return (
+              <div key={recipe.id} style={{ ...st.recipeCard, border: `1.5px solid ${C.brown}30` }}>
+                <div
+                  style={{ padding: '14px', cursor: 'pointer' }}
+                  onClick={() => setExpandedRecipe(open ? null : `saved_${idx}`)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '26px' }}>{recipe.emoji || '🍽️'}</span>
+                    <div style={{ flex: 1 }}>
+                      <div
+                        style={{
+                          fontWeight: 700,
+                          fontSize: '15px',
+                          fontFamily: "'Playfair Display',serif",
+                          color: C.brown,
+                        }}
+                      >
+                        {recipe.nom}
+                      </div>
+                      <div style={{ fontSize: '12px', color: C.textMid, marginTop: '2px' }}>
+                        {recipe.description}
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        saveRecipe(recipe)
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        fontSize: '16px',
+                        cursor: 'pointer',
+                        opacity: 0.6,
+                      }}
+                    >
+                      🗑
+                    </button>
+                    <span style={{ color: C.border, fontSize: '16px' }}>{open ? '▲' : '▼'}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
+                    <span style={st.badge(C.brownMid)}>⏱ {recipe.temps} min</span>
+                    <span style={st.badge(C.green)}>👤 {recipe.portions} pers.</span>
+                    {recipe.difficulte && (
+                      <span style={st.badge(C.brownLight)}>{recipe.difficulte}</span>
+                    )}
+                    <span style={st.badge(C.brown)}>
+                      🔖 {recipe.source === 'ia' ? 'Générée' : 'Analysée'}
+                    </span>
+                  </div>
+                </div>
+                {open && (
+                  <div style={{ padding: '0 14px 14px', borderTop: `1px solid ${C.border}` }}>
+                    {recipe.ingredients_detail?.length > 0 && (
+                      <div style={{ marginTop: '12px' }}>
+                        <SectionLabel>Ingrédients</SectionLabel>
+                        <div
+                          style={{
+                            background: C.bgInset,
+                            borderRadius: '12px',
+                            padding: '10px 12px',
+                          }}
+                        >
+                          {recipe.ingredients_detail.map((ing, i) => (
+                            <div
+                              key={i}
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                padding: '5px 0',
+                                borderBottom:
+                                  i < recipe.ingredients_detail.length - 1
+                                    ? `1px solid ${C.border}`
+                                    : 'none',
+                              }}
+                            >
+                              <span style={{ fontSize: '13px', color: C.text }}>{ing.nom}</span>
+                              <span style={{ fontSize: '13px', fontWeight: 700, color: C.brown }}>
+                                {ing.quantite} {ing.unite}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {recipe.etapes?.length > 0 && (
+                      <div style={{ marginTop: '14px' }}>
+                        <SectionLabel>Étapes</SectionLabel>
+                        {recipe.etapes.map((e, i) => (
+                          <div
+                            key={i}
+                            style={{ display: 'flex', gap: '10px', marginBottom: '8px' }}
+                          >
+                            <span
+                              style={{
+                                minWidth: '22px',
+                                height: '22px',
+                                borderRadius: '50%',
+                                background: `${C.brown}18`,
+                                color: C.brown,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                flexShrink: 0,
+                              }}
+                            >
+                              {i + 1}
+                            </span>
+                            <span style={{ fontSize: '13px', color: C.text, lineHeight: 1.5 }}>
+                              {e}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {recipe.conseil && (
+                      <div
+                        style={{
+                          marginTop: '10px',
+                          padding: '10px 12px',
+                          background: `${C.green}10`,
+                          borderRadius: '10px',
+                          border: `1px solid ${C.green}30`,
+                        }}
+                      >
+                        <span style={{ fontSize: '12px', color: C.green }}>
+                          💡 {recipe.conseil}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {/* Analyser une recette */}
+      <Card>
+        <SectionLabel>Analyser une recette</SectionLabel>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <label
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '12px 8px',
+              borderRadius: '14px',
+              background: `linear-gradient(135deg,${C.terra}20,${C.terra}0a)`,
+              border: `2px solid ${C.terra}70`,
+              cursor: 'pointer',
+              fontFamily: "'Lato',sans-serif",
+            }}
+          >
+            <span style={{ fontSize: '20px' }}>📖</span>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: C.terra }}>
+              Photo / Screenshot
+            </span>
+            <input
+              type='file'
+              accept='image/*'
+              style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
+              onChange={(e) => {
+                if (e.target.files?.[0]) analyzeRecipePhoto(e.target.files[0])
+                e.target.value = ''
+              }}
+            />
+          </label>
+          <button
+            onClick={() => setShowRecipeTextInput((p) => !p)}
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '12px 8px',
+              borderRadius: '14px',
+              background: `linear-gradient(135deg,${C.brown}20,${C.brown}0a)`,
+              border: `2px solid ${C.brown}70`,
+              cursor: 'pointer',
+              fontFamily: "'Lato',sans-serif",
+            }}
+          >
+            <span style={{ fontSize: '20px' }}>🔗</span>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: C.brown }}>URL / Texte</span>
+          </button>
+        </div>
+        {showRecipeTextInput && (
+          <div style={{ marginTop: '12px' }}>
+            <textarea
+              placeholder={
+                "Colle une URL (Marmiton, YouTube, Instagram...)\nou le texte d'une recette directement"
+              }
+              value={recipeTextInput}
+              onChange={(e) => setRecipeTextInput(e.target.value)}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                minHeight: '80px',
+                background: C.bgInset,
+                border: `1.5px solid ${C.border}`,
+                borderRadius: '10px',
+                padding: '10px 13px',
+                color: C.text,
+                fontSize: '13px',
+                fontFamily: "'Lato',sans-serif",
+                outline: 'none',
+                resize: 'vertical',
+              }}
+            />
+            <div style={{ marginTop: '8px' }}>
+              <Btn
+                onClick={() => {
+                  analyzeRecipeText(recipeTextInput)
+                  setRecipeTextInput('')
+                }}
+                disabled={!recipeTextInput.trim()}
+              >
+                🔍 Analyser
+              </Btn>
+            </div>
+          </div>
+        )}
+      </Card>
       {/* Niveau énergie - grille 2x2 */}
       <Card>
         <SectionLabel>Niveau d'énergie</SectionLabel>
@@ -2930,7 +4272,58 @@ Réponds UNIQUEMENT en JSON valide :
             </div>
           </div>
         )}
-
+        <div style={{ marginBottom: '12px' }}>
+          <div
+            style={{
+              fontSize: '10px',
+              fontWeight: 700,
+              color: C.textLight,
+              textTransform: 'uppercase',
+              letterSpacing: '0.8px',
+              marginBottom: '6px',
+            }}
+          >
+            Ingrédients manquants tolérés
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            {[
+              { id: 'strict', label: '🔒 Strict', desc: "Que ce que j'ai" },
+              { id: 'un', label: '+1', desc: 'Un achat possible' },
+              { id: 'deux', label: '+2-3', desc: 'Petite course' },
+              { id: 'libre', label: '🌐 Libre', desc: 'Peu importe' },
+            ].map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTolerance(t.id)}
+                style={{
+                  flex: 1,
+                  padding: '6px 4px',
+                  borderRadius: '10px',
+                  fontSize: '10px',
+                  fontWeight: 700,
+                  border: tolerance === t.id ? `1.5px solid ${C.green}` : `1px solid ${C.border}`,
+                  background: tolerance === t.id ? `${C.green}15` : C.bgInset,
+                  color: tolerance === t.id ? C.green : C.textLight,
+                  cursor: 'pointer',
+                  fontFamily: "'Lato',sans-serif",
+                  textAlign: 'center',
+                }}
+              >
+                <div>{t.label}</div>
+                <div
+                  style={{
+                    fontSize: '9px',
+                    fontWeight: 400,
+                    marginTop: '2px',
+                    color: tolerance === t.id ? C.green : C.textLight,
+                  }}
+                >
+                  {t.desc}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
         <SectionLabel>Prêt à générer ?</SectionLabel>
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
           {[
@@ -3150,44 +4543,8 @@ Réponds UNIQUEMENT en JSON valide :
         </div>
       </Card>
 
-      {/* Analyser une recette */}
-      <Card>
-        <SectionLabel>Analyser une recette</SectionLabel>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <label
-            style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '12px 8px',
-              borderRadius: '14px',
-              background: `linear-gradient(135deg,${C.terra}20,${C.terra}0a)`,
-              border: `2px solid ${C.terra}70`,
-              cursor: 'pointer',
-              fontFamily: "'Lato',sans-serif",
-            }}
-          >
-            <span style={{ fontSize: '20px' }}>📖</span>
-            <span style={{ fontSize: '11px', fontWeight: 700, color: C.terra }}>
-              Photo / Screenshot
-            </span>
-            <input
-              type='file'
-              accept='image/*'
-              style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
-              onChange={(e) => {
-                if (e.target.files?.[0]) analyzeRecipePhoto(e.target.files[0])
-                e.target.value = ''
-              }}
-            />
-          </label>
-        </div>
-      </Card>
-
       <Btn onClick={generateRecipes} disabled={ingredients.length < 3 || recipeLoading}>
-        {recipeLoading ? '🍳 Le chef réfléchit...' : '✨ Générer 3 recettes'}
+        {recipeLoading ? '🍳 Le chef réfléchit...' : "✨ Qu'est-ce qu'on s'fait à soir ?"}
       </Btn>
 
       {recipeLoading && (
@@ -3559,6 +4916,22 @@ Réponds UNIQUEMENT en JSON valide :
                     <Btn variant='outline' small onClick={() => openRating(recipe)}>
                       ⭐ Avis
                     </Btn>
+                    <button
+                      onClick={() => saveRecipe(recipe)}
+                      style={{
+                        padding: '7px 12px',
+                        borderRadius: '12px',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        border: `1.5px solid ${C.borderDark}`,
+                        background: isRecipeSaved(recipe.nom) ? `${C.brown}20` : 'transparent',
+                        color: isRecipeSaved(recipe.nom) ? C.brown : C.textLight,
+                        cursor: 'pointer',
+                        fontFamily: "'Playfair Display',serif",
+                      }}
+                    >
+                      {isRecipeSaved(recipe.nom) ? '🔖 Sauvegardée' : '🔖 Sauvegarder'}
+                    </button>
                   </div>
                 </div>
               )}
@@ -3568,315 +4941,11 @@ Réponds UNIQUEMENT en JSON valide :
     </div>
   )
 
-  {
-    showRecipeAnalysis && (
-      <div
-        style={{
-          position: 'fixed',
-          inset: 0,
-          background: '#3a2a1a88',
-          zIndex: 100,
-          display: 'flex',
-          alignItems: 'flex-end',
-        }}
-      >
-        <div
-          style={{
-            background: C.bgCard,
-            borderRadius: '24px 24px 0 0',
-            padding: '20px',
-            width: '100%',
-            maxWidth: '430px',
-            margin: '0 auto',
-            maxHeight: '88vh',
-            overflowY: 'auto',
-            boxShadow: `0 -8px 32px ${C.brown}30`,
-          }}
-        >
-          {recipeAnalysisLoading ? (
-            <div style={{ textAlign: 'center', padding: '40px 0' }}>
-              <div style={{ fontSize: '32px', marginBottom: '12px' }}>📖</div>
-              <div
-                style={{
-                  fontFamily: "'Playfair Display',serif",
-                  fontSize: '16px',
-                  color: C.brown,
-                  marginBottom: '6px',
-                }}
-              >
-                Lecture de la recette...
-              </div>
-              <div style={{ fontSize: '12px', color: C.textLight }}>
-                Croisement avec ton inventaire en cours
-              </div>
-            </div>
-          ) : recipeAnalysisResult?.error ? (
-            <div style={{ textAlign: 'center', padding: '32px 0' }}>
-              <div style={{ fontSize: '30px', marginBottom: '8px' }}>❌</div>
-              <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
-                Impossible de lire cette recette. Essaie avec une photo plus nette.
-              </div>
-              <Btn
-                variant='outline'
-                onClick={() => {
-                  setShowRecipeAnalysis(false)
-                  setRecipeAnalysisResult(null)
-                }}
-              >
-                Fermer
-              </Btn>
-            </div>
-          ) : (
-            recipeAnalysisResult && (
-              <>
-                <div
-                  style={{
-                    fontFamily: "'Playfair Display',serif",
-                    fontSize: '18px',
-                    fontWeight: 700,
-                    color: C.brown,
-                    marginBottom: '2px',
-                  }}
-                >
-                  📖 {recipeAnalysisResult.nom_recette}
-                </div>
-                <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '16px' }}>
-                  {recipeAnalysisResult.portions_recette} portions ·{' '}
-                  {recipeAnalysisResult.ingredients?.length} ingrédients analysés
-                </div>
-
-                {/* Stats rapides */}
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                  {[
-                    {
-                      label: "✅ J'ai",
-                      count: recipeAnalysisResult.ingredients?.filter(
-                        (i) => i.statut === 'disponible'
-                      ).length,
-                      color: C.green,
-                    },
-                    {
-                      label: '🔄 Substitut',
-                      count: recipeAnalysisResult.ingredients?.filter(
-                        (i) => i.statut === 'substituable'
-                      ).length,
-                      color: '#d4a017',
-                    },
-                    {
-                      label: '🛒 Manque',
-                      count: recipeAnalysisResult.ingredients?.filter(
-                        (i) => i.statut === 'manquant'
-                      ).length,
-                      color: C.terra,
-                    },
-                  ].map((s) => (
-                    <div
-                      key={s.label}
-                      style={{
-                        flex: 1,
-                        textAlign: 'center',
-                        padding: '8px 4px',
-                        borderRadius: '10px',
-                        background: s.color + '15',
-                        border: `1px solid ${s.color}30`,
-                      }}
-                    >
-                      <div style={{ fontSize: '18px', fontWeight: 800, color: s.color }}>
-                        {s.count}
-                      </div>
-                      <div style={{ fontSize: '9px', color: s.color, fontWeight: 600 }}>
-                        {s.label}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Ingrédients par statut */}
-                {['disponible', 'substituable', 'manquant'].map((statut) => {
-                  const items =
-                    recipeAnalysisResult.ingredients?.filter((i) => i.statut === statut) || []
-                  if (!items.length) return null
-                  const cfg = {
-                    disponible: { icon: '✅', color: C.green, label: 'Dans ton frigo' },
-                    substituable: { icon: '🔄', color: '#d4a017', label: 'Substituable' },
-                    manquant: { icon: '🛒', color: C.terra, label: 'À acheter' },
-                  }[statut]
-                  return (
-                    <div key={statut} style={{ marginBottom: '14px' }}>
-                      <div
-                        style={{
-                          fontSize: '10px',
-                          fontWeight: 700,
-                          color: cfg.color,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.8px',
-                          marginBottom: '8px',
-                        }}
-                      >
-                        {cfg.icon} {cfg.label}
-                      </div>
-                      {items.map((ing, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '10px',
-                            background: cfg.color + '0d',
-                            border: `1px solid ${cfg.color}25`,
-                            marginBottom: '6px',
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'flex-start',
-                            }}
-                          >
-                            <div style={{ flex: 1 }}>
-                              <span style={{ fontWeight: 700, fontSize: '13px', color: C.text }}>
-                                {ing.nom}
-                              </span>
-                              <div
-                                style={{
-                                  display: 'flex',
-                                  gap: '6px',
-                                  alignItems: 'center',
-                                  marginTop: '2px',
-                                  flexWrap: 'wrap',
-                                }}
-                              >
-                                {/* Quantité recette */}
-                                <span style={{ fontSize: '11px', color: C.textMid }}>
-                                  Recette : {ing.quantite_recette || ing.quantite} {ing.unite}
-                                </span>
-                                {/* Quantité gonflée si différente */}
-                                {ing.quantite_course &&
-                                  ing.quantite_course !== ing.quantite_recette && (
-                                    <span
-                                      style={{
-                                        fontSize: '11px',
-                                        fontWeight: 700,
-                                        color: C.terra,
-                                        background: `${C.terra}15`,
-                                        padding: '1px 6px',
-                                        borderRadius: '8px',
-                                      }}
-                                    >
-                                      → À acheter : {ing.quantite_course} {ing.unite}
-                                    </span>
-                                  )}
-                              </div>
-                              {ing.note_quantite && (
-                                <div
-                                  style={{
-                                    fontSize: '10px',
-                                    color: C.terra,
-                                    marginTop: '2px',
-                                    fontStyle: 'italic',
-                                  }}
-                                >
-                                  💡 {ing.note_quantite}
-                                </div>
-                              )}
-                              {ing.substitut && (
-                                <div
-                                  style={{
-                                    fontSize: '11px',
-                                    color: '#d4a017',
-                                    marginTop: '2px',
-                                  }}
-                                >
-                                  → Utilise : {ing.substitut}
-                                </div>
-                              )}
-                              {ing.note && (
-                                <div
-                                  style={{
-                                    fontSize: '11px',
-                                    color: C.textLight,
-                                    marginTop: '2px',
-                                    fontStyle: 'italic',
-                                  }}
-                                >
-                                  {ing.note}
-                                </div>
-                              )}
-                            </div>
-                            {/* Bouton + pour ajouter à la liste */}
-                            {statut === 'manquant' && (
-                              <button
-                                onClick={() => addSingleToShoppingList(ing)}
-                                style={{
-                                  background: C.terra,
-                                  border: 'none',
-                                  borderRadius: '8px',
-                                  color: '#fff',
-                                  fontWeight: 700,
-                                  fontSize: '16px',
-                                  width: '28px',
-                                  height: '28px',
-                                  cursor: 'pointer',
-                                  flexShrink: 0,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  marginLeft: '8px',
-                                }}
-                              >
-                                +
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )
-                })}
-
-                {recipeAnalysisResult.conseil_chef && (
-                  <div
-                    style={{
-                      padding: '10px 12px',
-                      background: `${C.green}10`,
-                      borderRadius: '10px',
-                      border: `1px solid ${C.green}30`,
-                      marginBottom: '16px',
-                    }}
-                  >
-                    <span style={{ fontSize: '12px', color: C.green }}>
-                      💡 {recipeAnalysisResult.conseil_chef}
-                    </span>
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <Btn
-                    variant='outline'
-                    onClick={() => {
-                      setShowRecipeAnalysis(false)
-                      setRecipeAnalysisResult(null)
-                    }}
-                  >
-                    Fermer
-                  </Btn>
-                  {recipeAnalysisResult.ingredients?.some((i) => i.statut === 'manquant') && (
-                    <div style={{ flex: 1 }}>
-                      <Btn variant='green' onClick={addMissingToShoppingList}>
-                        🛒 Ajouter aux courses
-                      </Btn>
-                    </div>
-                  )}
-                </div>
-              </>
-            )
-          )}
-        </div>
-      </div>
-    )
-  }
-
   // ── Shopping Tab ───────────────────────────────────────────────
+  // NOTE : l'estimation de prix utilise désormais getPriceEstimate()
+  // (défini plus haut) qui interroge l'historique réel des prix avant
+  // de retomber sur PRICE_FALLBACK_BY_CATEGORY (constante top-level).
+
   const renderCourses = () => {
     const activeLists = JSON.parse(sessionStorage.getItem('lgm_active_lists') || '[]')
     const setActiveLists = (v) =>
@@ -3885,38 +4954,58 @@ Réponds UNIQUEMENT en JSON valide :
         JSON.stringify(typeof v === 'function' ? v(activeLists) : v)
       )
 
-    // Consolide recettes + panier manuel
-    const consolidatedItems = {}
+    // Consolide recettes + panier manuel — séparé alimentaire / maison
+    const consolidatedFood = {}
+    const consolidatedNonFood = {}
 
-    // Items des listes recettes sélectionnées
+    const addToConsolidated = (bucket, key, nom, quantite, listTitre, category) => {
+      if (!bucket[key]) {
+        const priceInfo = getPriceEstimate(nom, null, category)
+        bucket[key] = { nom, quantites: [], source: 'liste', priceInfo }
+      }
+      bucket[key].quantites.push({ quantite, listTitre })
+    }
+
+    // Items des listes recettes sélectionnées — toujours alimentaire
     shoppingLists
       .filter((l) => activeLists.includes(l.id))
       .forEach((list) => {
         list.categories?.forEach((cat) => {
           cat.items.forEach((item) => {
             const key = item.nom.toLowerCase().trim()
-            if (!consolidatedItems[key])
-              consolidatedItems[key] = { nom: item.nom, quantites: [], source: 'liste' }
-            consolidatedItems[key].quantites.push({
-              quantite: item.quantite,
-              listTitre: list.titre,
-            })
+            addToConsolidated(consolidatedFood, key, item.nom, item.quantite, list.titre, 'Autre')
           })
         })
       })
 
-    // Items du panier manuel — toujours présents
+    // Items du panier manuel — répartis selon isFood
     manualCart.forEach((item) => {
       const key = item.nom.toLowerCase().trim()
-      if (!consolidatedItems[key])
-        consolidatedItems[key] = { nom: item.nom, quantites: [], source: 'manuel' }
-      consolidatedItems[key].quantites.push({
+      const bucket = item.isFood === false ? consolidatedNonFood : consolidatedFood
+      const category = item.isFood === false ? 'Autre maison' : 'Autre'
+      if (!bucket[key]) {
+        const priceInfo = getPriceEstimate(item.nom, null, category)
+        bucket[key] = { nom: item.nom, quantites: [], source: 'manuel', priceInfo }
+      }
+      bucket[key].quantites.push({
         quantite: `${item.quantity} ${item.unit}`,
         listTitre: 'Panier',
       })
     })
 
-    const consolidatedList = Object.values(consolidatedItems)
+    const consolidatedFoodList = Object.values(consolidatedFood)
+    const consolidatedNonFoodList = Object.values(consolidatedNonFood)
+    const consolidatedList = [...consolidatedFoodList, ...consolidatedNonFoodList]
+
+    const totalEstimatedFood = consolidatedFoodList.reduce(
+      (sum, i) => sum + (i.priceInfo?.estimated || 0),
+      0
+    )
+    const totalEstimatedNonFood = consolidatedNonFoodList.reduce(
+      (sum, i) => sum + (i.priceInfo?.estimated || 0),
+      0
+    )
+
     const checkedKey = 'lgm_checked_consolidated'
     const checkedItems = JSON.parse(sessionStorage.getItem(checkedKey) || '{}')
     const toggleChecked = (key) => {
@@ -4127,32 +5216,22 @@ Réponds UNIQUEMENT en JSON valide :
           )}
         </Card>
 
-        {/* Vue consolidée */}
-        {consolidatedList.length > 0 && (
+        {/* Vue consolidée — Alimentaire */}
+        {consolidatedFoodList.length > 0 && (
           <Card>
             <div
               style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}
             >
-              <SectionLabel style={{ marginBottom: 0 }}>📋 Liste consolidée</SectionLabel>
-              <div style={{ flex: 1, height: '5px', borderRadius: '3px', background: C.border }}>
-                <div
-                  style={{
-                    height: '100%',
-                    borderRadius: '3px',
-                    background: C.green,
-                    width: totalItems > 0 ? `${(doneItems / totalItems) * 100}%` : '0%',
-                    transition: 'width 0.3s',
-                  }}
-                />
-              </div>
+              <SectionLabel style={{ marginBottom: 0 }}>🥦 Courses alimentaires</SectionLabel>
+              <div style={{ flex: 1 }} />
               <span
                 style={{ fontSize: '11px', fontWeight: 700, color: C.green, whiteSpace: 'nowrap' }}
               >
-                {doneItems}/{totalItems}
+                ~{totalEstimatedFood.toFixed(2)}€
               </span>
             </div>
 
-            {consolidatedList.map((item, i) => {
+            {consolidatedFoodList.map((item, i) => {
               const key = item.nom.toLowerCase().trim()
               const done = checkedItems[key]
               const qtDisplay = item.quantites.map((q) => q.quantite).join(' + ')
@@ -4166,7 +5245,7 @@ Réponds UNIQUEMENT en JSON valide :
                     gap: '10px',
                     padding: '9px 0',
                     borderBottom:
-                      i < consolidatedList.length - 1 ? `1px solid ${C.border}` : 'none',
+                      i < consolidatedFoodList.length - 1 ? `1px solid ${C.border}` : 'none',
                     cursor: 'pointer',
                     opacity: done ? 0.45 : 1,
                   }}
@@ -4228,6 +5307,117 @@ Réponds UNIQUEMENT en JSON valide :
                       </div>
                     )}
                   </div>
+                  {item.priceInfo && (
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        color: item.priceInfo.confidence === 'high' ? C.green : C.textLight,
+                        fontWeight: 600,
+                        fontStyle: item.priceInfo.confidence === 'low' ? 'italic' : 'normal',
+                      }}
+                      title={
+                        item.priceInfo.confidence === 'low'
+                          ? 'Estimation approximative — pas de prix enregistré'
+                          : 'Prix basé sur historique'
+                      }
+                    >
+                      ~{item.priceInfo.estimated.toFixed(2)}€
+                    </span>
+                  )}
+                </div>
+              )
+            })}
+          </Card>
+        )}
+
+        {/* Vue consolidée — Maison */}
+        {consolidatedNonFoodList.length > 0 && (
+          <Card>
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}
+            >
+              <SectionLabel style={{ marginBottom: 0 }}>🧴 Courses maison</SectionLabel>
+              <div style={{ flex: 1 }} />
+              <span
+                style={{ fontSize: '11px', fontWeight: 700, color: C.terra, whiteSpace: 'nowrap' }}
+              >
+                ~{totalEstimatedNonFood.toFixed(2)}€
+              </span>
+            </div>
+
+            {consolidatedNonFoodList.map((item, i) => {
+              const key = item.nom.toLowerCase().trim()
+              const done = checkedItems[key]
+              const qtDisplay = item.quantites.map((q) => q.quantite).join(' + ')
+              return (
+                <div
+                  key={key}
+                  onClick={() => toggleChecked(key)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '9px 0',
+                    borderBottom:
+                      i < consolidatedNonFoodList.length - 1 ? `1px solid ${C.border}` : 'none',
+                    cursor: 'pointer',
+                    opacity: done ? 0.45 : 1,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: '22px',
+                      height: '22px',
+                      borderRadius: '6px',
+                      border: `2px solid ${done ? C.terra : C.border}`,
+                      background: done ? C.terra : 'transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {done && <span style={{ color: '#fff', fontSize: '12px' }}>✓</span>}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <span
+                      style={{
+                        fontWeight: 600,
+                        fontSize: '14px',
+                        color: C.text,
+                        textDecoration: done ? 'line-through' : 'none',
+                      }}
+                    >
+                      {item.nom}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: '12px',
+                        color: C.terra,
+                        marginLeft: '8px',
+                        fontWeight: 700,
+                      }}
+                    >
+                      {qtDisplay}
+                    </span>
+                  </div>
+                  {item.priceInfo && (
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        color: item.priceInfo.confidence === 'high' ? C.green : C.textLight,
+                        fontWeight: 600,
+                        fontStyle: item.priceInfo.confidence === 'low' ? 'italic' : 'normal',
+                      }}
+                      title={
+                        item.priceInfo.confidence === 'low'
+                          ? 'Estimation approximative — pas de prix enregistré'
+                          : 'Prix basé sur historique'
+                      }
+                    >
+                      ~{item.priceInfo.estimated.toFixed(2)}€
+                    </span>
+                  )}
                 </div>
               )
             })}
@@ -4347,11 +5537,82 @@ Réponds UNIQUEMENT en JSON valide :
 
       {/* Header */}
       <div style={st.header}>
-        <div style={st.title}>🧺 Le Garde Manger</div>
-        <div style={st.sub}>
-          {ingredients.length} ingrédient{ingredients.length !== 1 ? 's' : ''} · {equipment.length}{' '}
-          équipement{equipment.length !== 1 ? 's' : ''} · {users.length} convive
-          {users.length !== 1 ? 's' : ''}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <img
+              src='/app/logo_kesoir.png'
+              alt='Kësoir'
+              style={{ width: '80px', height: '80px', objectFit: 'contain', borderRadius: '10px' }}
+            />
+            <div>
+              <div style={st.title}>Kësoir</div>
+              <div style={st.sub}>
+                {ingredients.length} ingr. · {equipment.length} équip. · {users.length} convive
+                {users.length !== 1 ? 's' : ''} · <em>On mange quoi ce soir ?</em>
+              </div>
+            </div>
+          </div>
+
+          <div
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}
+          >
+            <a
+              href='/roadmap'
+              target='_blank'
+              rel='noopener noreferrer'
+              style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                color: C.textLight,
+                textDecoration: 'none',
+                padding: '6px 12px',
+                borderRadius: '999px',
+                border: `1px solid ${C.border}`,
+                background: C.bgInset,
+                letterSpacing: '0.5px',
+              }}
+            >
+              🗺️ Roadmap
+            </a>
+
+            {!authLoading &&
+              (isAuthenticated ? (
+                <button
+                  onClick={logout}
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: C.green,
+                    padding: '6px 12px',
+                    borderRadius: '999px',
+                    border: `1px solid ${C.green}50`,
+                    background: `${C.green}12`,
+                    cursor: 'pointer',
+                    fontFamily: "'Lato',sans-serif",
+                  }}
+                  title={user?.email}
+                >
+                  ✓ {user?.displayName?.split(' ')[0] || 'Connecté'}
+                </button>
+              ) : (
+                <button
+                  onClick={login}
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: C.brown,
+                    padding: '6px 12px',
+                    borderRadius: '999px',
+                    border: `1px solid ${C.brown}50`,
+                    background: `${C.brown}12`,
+                    cursor: 'pointer',
+                    fontFamily: "'Lato',sans-serif",
+                  }}
+                >
+                  🔐 Se connecter
+                </button>
+              ))}
+          </div>
         </div>
       </div>
 
@@ -4377,6 +5638,503 @@ Réponds UNIQUEMENT en JSON valide :
 
       {/* Rating bottom sheet */}
       {renderRatingPanel()}
+
+      {/* Confirmation après scan code-barres */}
+      {showBarcodeConfirm && pendingBarcodeProduct && (
+        <div
+          style={st.ratingPanel}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowBarcodeConfirm(false)
+              setPendingBarcodeProduct(null)
+            }
+          }}
+        >
+          <div style={{ ...st.ratingSheet, maxHeight: '85vh', overflowY: 'auto' }}>
+            <div
+              style={{
+                fontFamily: "'Playfair Display',serif",
+                fontSize: '18px',
+                fontWeight: 700,
+                color: pendingBarcodeProduct.notFound ? C.terra : C.green,
+                marginBottom: '4px',
+              }}
+            >
+              {pendingBarcodeProduct.source === 'ticket'
+                ? '✏️ Saisir cet article'
+                : pendingBarcodeProduct.notFound
+                  ? '❓ Produit non trouvé'
+                  : '✅ Article trouvé'}
+            </div>
+            <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '10px' }}>
+              {pendingBarcodeProduct.source === 'ticket'
+                ? 'Le texte du ticket est repris comme point de départ — modifie-le librement.'
+                : pendingBarcodeProduct.notFound
+                  ? `Code-barres ${pendingBarcodeProduct.barcode} inconnu sur Open Food Facts — renseigne-le manuellement.`
+                  : 'Vérifie et corrige si besoin avant de l’ajouter au frigo.'}
+            </div>
+
+            {pendingBarcodeProduct.ticketRawText && (
+              <div
+                style={{
+                  fontSize: '11px',
+                  color: C.textLight,
+                  fontFamily: 'monospace',
+                  background: C.bgInset,
+                  padding: '6px 10px',
+                  borderRadius: '8px',
+                  marginBottom: '14px',
+                }}
+              >
+                Texte du ticket : {pendingBarcodeProduct.ticketRawText}
+              </div>
+            )}
+
+            {pendingBarcodeProduct.image && (
+              <div style={{ textAlign: 'center', marginBottom: '14px' }}>
+                <img
+                  src={pendingBarcodeProduct.image}
+                  alt=''
+                  style={{
+                    maxHeight: '90px',
+                    borderRadius: '10px',
+                    border: `1px solid ${C.border}`,
+                  }}
+                />
+              </div>
+            )}
+
+            <SectionLabel>Nom du produit</SectionLabel>
+            <div style={{ marginBottom: '10px' }}>
+              <Input
+                placeholder="Nom de l'ingrédient"
+                value={pendingBarcodeProduct.name}
+                onChange={(v) => setPendingBarcodeProduct((p) => ({ ...p, name: v }))}
+              />
+            </div>
+
+            {pendingBarcodeProduct.brand && (
+              <div style={{ fontSize: '11px', color: C.textLight, marginBottom: '10px' }}>
+                Marque détectée : {pendingBarcodeProduct.brand}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+              <div style={{ flex: 2 }}>
+                <Input
+                  placeholder='Quantité'
+                  value={pendingBarcodeProduct.quantity}
+                  onChange={(v) => setPendingBarcodeProduct((p) => ({ ...p, quantity: v }))}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <Select
+                  value={pendingBarcodeProduct.unit}
+                  onChange={(v) => setPendingBarcodeProduct((p) => ({ ...p, unit: v }))}
+                >
+                  {UNITS.map((u) => (
+                    <option key={u}>{u}</option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '10px' }}>
+              <Select
+                value={pendingBarcodeProduct.category}
+                onChange={(v) => setPendingBarcodeProduct((p) => ({ ...p, category: v }))}
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </Select>
+            </div>
+
+            <div style={{ marginBottom: '10px' }}>
+              <Select
+                value={pendingBarcodeProduct.storage}
+                onChange={(v) => setPendingBarcodeProduct((p) => ({ ...p, storage: v }))}
+              >
+                {STORAGE_TYPES.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.icon} {s.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            <div style={{ fontSize: '11px', color: C.textLight, marginBottom: '4px' }}>
+              Date limite de consommation (optionnel)
+            </div>
+            <div style={{ marginBottom: '10px' }}>
+              <Input
+                type='date'
+                value={pendingBarcodeProduct.dlc}
+                onChange={(v) => setPendingBarcodeProduct((p) => ({ ...p, dlc: v }))}
+              />
+            </div>
+
+            <div style={{ fontSize: '11px', color: C.textLight, marginBottom: '4px' }}>
+              {pendingBarcodeProduct.source === 'ticket'
+                ? 'Prix payé (détecté sur le ticket — vérifie-le)'
+                : 'Prix payé (optionnel — Open Food Facts ne le fournit pas)'}
+            </div>
+            <div style={{ marginBottom: '14px' }}>
+              <Input
+                placeholder='ex: 2.50'
+                value={pendingBarcodeProduct.price || ''}
+                onChange={(v) =>
+                  setPendingBarcodeProduct((p) => ({ ...p, price: v.replace(',', '.') }))
+                }
+              />
+              {pendingBarcodeProduct.source === 'ticket' && (
+                <div style={{ fontSize: '10px', color: C.textLight, marginTop: '4px' }}>
+                  ⚠️ Si ce produit fait partie d'un lot ou d'une promo, corrige le prix pour qu'il
+                  reflète un seul article — sinon l'estimation des courses sera faussée.
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <Btn
+                variant='outline'
+                onClick={() => {
+                  setShowBarcodeConfirm(false)
+                  setPendingBarcodeProduct(null)
+                }}
+              >
+                Annuler
+              </Btn>
+              <div style={{ flex: 1, minWidth: '140px' }}>
+                <Btn
+                  variant='green'
+                  onClick={() => confirmBarcodeProduct(false)}
+                  disabled={!pendingBarcodeProduct.name?.trim()}
+                >
+                  ✓ Ajouter au frigo
+                </Btn>
+              </div>
+              {pendingBarcodeProduct.source === 'barcode' && (
+                <div style={{ flex: 1, minWidth: '140px' }}>
+                  <Btn
+                    variant='primary'
+                    onClick={() => confirmBarcodeProduct(true)}
+                    disabled={!pendingBarcodeProduct.name?.trim()}
+                  >
+                    ✓ + scanner le suivant
+                  </Btn>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRecipeAnalysis && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: '#3a2a1a88',
+            zIndex: 100,
+            display: 'flex',
+            alignItems: 'flex-end',
+          }}
+        >
+          <div
+            style={{
+              background: C.bgCard,
+              borderRadius: '24px 24px 0 0',
+              padding: '20px',
+              width: '100%',
+              maxWidth: '430px',
+              margin: '0 auto',
+              maxHeight: '88vh',
+              overflowY: 'auto',
+              boxShadow: `0 -8px 32px ${C.brown}30`,
+            }}
+          >
+            {recipeAnalysisLoading ? (
+              <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                <div style={{ fontSize: '32px', marginBottom: '12px' }}>📖</div>
+                <div
+                  style={{
+                    fontFamily: "'Playfair Display',serif",
+                    fontSize: '16px',
+                    color: C.brown,
+                    marginBottom: '6px',
+                  }}
+                >
+                  Lecture de la recette...
+                </div>
+                <div style={{ fontSize: '12px', color: C.textLight }}>
+                  Croisement avec ton inventaire en cours
+                </div>
+              </div>
+            ) : recipeAnalysisResult?.error ? (
+              <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                <div style={{ fontSize: '30px', marginBottom: '8px' }}>❌</div>
+                <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
+                  Impossible de lire cette recette. Essaie avec une photo plus nette.
+                </div>
+                <Btn
+                  variant='outline'
+                  onClick={() => {
+                    setShowRecipeAnalysis(false)
+                    setRecipeAnalysisResult(null)
+                  }}
+                >
+                  Fermer
+                </Btn>
+              </div>
+            ) : (
+              recipeAnalysisResult && (
+                <>
+                  <div
+                    style={{
+                      fontFamily: "'Playfair Display',serif",
+                      fontSize: '18px',
+                      fontWeight: 700,
+                      color: C.brown,
+                      marginBottom: '2px',
+                    }}
+                  >
+                    📖 {recipeAnalysisResult.nom_recette}
+                  </div>
+                  <div style={{ fontSize: '12px', color: C.textMid, marginBottom: '16px' }}>
+                    {recipeAnalysisResult.portions_recette} portions ·{' '}
+                    {recipeAnalysisResult.ingredients?.length} ingrédients analysés
+                  </div>
+
+                  {/* Stats rapides */}
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                    {[
+                      {
+                        label: "✅ J'ai",
+                        count: recipeAnalysisResult.ingredients?.filter(
+                          (i) => i.statut === 'disponible'
+                        ).length,
+                        color: C.green,
+                      },
+                      {
+                        label: '🔄 Substitut',
+                        count: recipeAnalysisResult.ingredients?.filter(
+                          (i) => i.statut === 'substituable'
+                        ).length,
+                        color: '#d4a017',
+                      },
+                      {
+                        label: '🛒 Manque',
+                        count: recipeAnalysisResult.ingredients?.filter(
+                          (i) => i.statut === 'manquant'
+                        ).length,
+                        color: C.terra,
+                      },
+                    ].map((s) => (
+                      <div
+                        key={s.label}
+                        style={{
+                          flex: 1,
+                          textAlign: 'center',
+                          padding: '8px 4px',
+                          borderRadius: '10px',
+                          background: s.color + '15',
+                          border: `1px solid ${s.color}30`,
+                        }}
+                      >
+                        <div style={{ fontSize: '18px', fontWeight: 800, color: s.color }}>
+                          {s.count}
+                        </div>
+                        <div style={{ fontSize: '9px', color: s.color, fontWeight: 600 }}>
+                          {s.label}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Ingrédients par statut */}
+                  {['disponible', 'substituable', 'manquant'].map((statut) => {
+                    const items =
+                      recipeAnalysisResult.ingredients?.filter((i) => i.statut === statut) || []
+                    if (!items.length) return null
+                    const cfg = {
+                      disponible: { icon: '✅', color: C.green, label: 'Dans ton frigo' },
+                      substituable: { icon: '🔄', color: '#d4a017', label: 'Substituable' },
+                      manquant: { icon: '🛒', color: C.terra, label: 'À acheter' },
+                    }[statut]
+                    return (
+                      <div key={statut} style={{ marginBottom: '14px' }}>
+                        <div
+                          style={{
+                            fontSize: '10px',
+                            fontWeight: 700,
+                            color: cfg.color,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.8px',
+                            marginBottom: '8px',
+                          }}
+                        >
+                          {cfg.icon} {cfg.label}
+                        </div>
+                        {items.map((ing, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              padding: '8px 10px',
+                              borderRadius: '10px',
+                              background: cfg.color + '0d',
+                              border: `1px solid ${cfg.color}25`,
+                              marginBottom: '6px',
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'flex-start',
+                              }}
+                            >
+                              <div style={{ flex: 1 }}>
+                                <span style={{ fontWeight: 700, fontSize: '13px', color: C.text }}>
+                                  {ing.nom}
+                                </span>
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    gap: '6px',
+                                    alignItems: 'center',
+                                    marginTop: '2px',
+                                    flexWrap: 'wrap',
+                                  }}
+                                >
+                                  {/* Quantité recette */}
+                                  <span style={{ fontSize: '11px', color: C.textMid }}>
+                                    Recette : {ing.quantite_recette || ing.quantite} {ing.unite}
+                                  </span>
+                                  {/* Quantité gonflée si différente */}
+                                  {ing.quantite_course &&
+                                    ing.quantite_course !== ing.quantite_recette && (
+                                      <span
+                                        style={{
+                                          fontSize: '11px',
+                                          fontWeight: 700,
+                                          color: C.terra,
+                                          background: `${C.terra}15`,
+                                          padding: '1px 6px',
+                                          borderRadius: '8px',
+                                        }}
+                                      >
+                                        → À acheter : {ing.quantite_course} {ing.unite}
+                                      </span>
+                                    )}
+                                </div>
+                                {ing.note_quantite && (
+                                  <div
+                                    style={{
+                                      fontSize: '10px',
+                                      color: C.terra,
+                                      marginTop: '2px',
+                                      fontStyle: 'italic',
+                                    }}
+                                  >
+                                    💡 {ing.note_quantite}
+                                  </div>
+                                )}
+                                {ing.substitut && (
+                                  <div
+                                    style={{
+                                      fontSize: '11px',
+                                      color: '#d4a017',
+                                      marginTop: '2px',
+                                    }}
+                                  >
+                                    → Utilise : {ing.substitut}
+                                  </div>
+                                )}
+                                {ing.note && (
+                                  <div
+                                    style={{
+                                      fontSize: '11px',
+                                      color: C.textLight,
+                                      marginTop: '2px',
+                                      fontStyle: 'italic',
+                                    }}
+                                  >
+                                    {ing.note}
+                                  </div>
+                                )}
+                              </div>
+                              {/* Bouton + pour ajouter à la liste */}
+                              {statut === 'manquant' && (
+                                <button
+                                  onClick={() => addSingleToShoppingList(ing)}
+                                  style={{
+                                    background: C.terra,
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    color: '#fff',
+                                    fontWeight: 700,
+                                    fontSize: '16px',
+                                    width: '28px',
+                                    height: '28px',
+                                    cursor: 'pointer',
+                                    flexShrink: 0,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    marginLeft: '8px',
+                                  }}
+                                >
+                                  +
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })}
+
+                  {recipeAnalysisResult.conseil_chef && (
+                    <div
+                      style={{
+                        padding: '10px 12px',
+                        background: `${C.green}10`,
+                        borderRadius: '10px',
+                        border: `1px solid ${C.green}30`,
+                        marginBottom: '16px',
+                      }}
+                    >
+                      <span style={{ fontSize: '12px', color: C.green }}>
+                        💡 {recipeAnalysisResult.conseil_chef}
+                      </span>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <Btn
+                      variant='outline'
+                      onClick={() => {
+                        setShowRecipeAnalysis(false)
+                        setRecipeAnalysisResult(null)
+                      }}
+                    >
+                      Fermer
+                    </Btn>
+                    {recipeAnalysisResult.ingredients?.some((i) => i.statut === 'manquant') && (
+                      <div style={{ flex: 1 }}>
+                        <Btn variant='green' onClick={addMissingToShoppingList}>
+                          🛒 Ajouter aux courses
+                        </Btn>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Adapt bottom sheet */}
       {showAdaptPanel && (
