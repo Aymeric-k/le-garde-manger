@@ -612,6 +612,9 @@ export default function App() {
   // useFirestoreCollection (un document par élément).
   const [priceHistory, setPriceHistory] = useFirestoreDoc(user?.uid, 'priceHistory', {})
   const [productCache, setProductCache] = useFirestoreDoc(user?.uid, 'productCache', {})
+  // Dictionnaire d'abréviations par enseigne — lecture seule ici, l'écriture
+  // se fait via mergeFirestoreDocField dans recordAbbreviationCorrection.
+  const [abbreviationDictionary] = useFirestoreDoc(user?.uid, 'abbreviationDictionary', {})
 
   // Migration unique localStorage → Firestore au premier login.
   // Tant que cette étape n'est pas branchée collection par collection
@@ -1197,6 +1200,16 @@ export default function App() {
     })
   }
 
+  // Phase 2 — lecture. Même clé que l'écriture (enseigne + texte brut
+  // normalisés). Retourne le résultat de classification mémorisé, ou
+  // null si cette ligne n'a jamais été corrigée pour cette enseigne.
+  function getAbbreviationMatch(enseigne, texteBrut) {
+    const texteBrutKey = normalizeAbbrevKey(texteBrut)
+    if (!texteBrutKey) return null
+    const enseigneKey = normalizeAbbrevKey(enseigne) || 'enseigne_inconnue'
+    return abbreviationDictionary[`${enseigneKey}__${texteBrutKey}`] || null
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // MATCHING PARTAGÉ — cache local puis Open Food Facts
   // ═══════════════════════════════════════════════════════════════
@@ -1219,8 +1232,38 @@ export default function App() {
   // sources se contentaient avant d'un "alimentaire" codé en dur, d'où
   // le mélange alimentaire/non-alimentaire et le "tout au garde-manger"
   // même pour de la viande ou des produits frais.
-  async function cleanupLigneNames(lignes) {
+  async function cleanupLigneNames(lignes, enseigne) {
     if (!lignes || lignes.length === 0) return lignes
+
+    // Phase 2 — avant tout appel GPT, vérifie pour chaque ligne si une
+    // correction manuelle existe déjà pour cette enseigne (dictionnaire
+    // d'abréviations). Si oui, le résultat mémorisé est réutilisé tel
+    // quel — zéro token consommé sur cette ligne. Les lignes sans
+    // correspondance suivent le chemin GPT habituel, inchangé.
+    const resolved = new Array(lignes.length)
+    const toClassify = []
+
+    lignes.forEach((ligne, i) => {
+      const match = getAbbreviationMatch(enseigne, ligne.texte_brut)
+      if (match) {
+        resolved[i] = {
+          ...ligne,
+          nom_propre: match.nom_propre,
+          type: match.type || 'alimentaire',
+          category: match.category || 'Autre',
+          storage: match.storage || 'garde_manger',
+          quantity: match.quantity ?? 1,
+          unit: UNITS.includes(match.unit) ? match.unit : 'pièce(s)',
+          confianceNom: 'haute',
+          fromDictionary: true,
+        }
+      } else {
+        toClassify.push({ ligne, i })
+      }
+    })
+
+    // Tout était déjà connu — aucun appel GPT nécessaire
+    if (toClassify.length === 0) return resolved
 
     try {
       const prompt = `Voici des lignes de ticket de caisse ou de commande drive français, extraites par un OCR automatique. Certaines sont juste abrégées (facile à déchiffrer), d'autres sont du BRUIT OCR corrompu (caractères incohérents, mots fusionnés, aucun sens réel) — les deux cas doivent être traités différemment.
@@ -1264,7 +1307,7 @@ Exemples :
 "N.JARDINA, P.P.CA GR.1/4.31X906" → nom_propre: "N.JARDINA, P.P.CA GR.1/4.31X906" (inchangé), type: alimentaire, category: Autre, storage: garde_manger, quantity: 1, unit: pièce(s), confiance: basse
 
 Lignes à traiter :
-${lignes.map((l, i) => `${i}: ${l.texte_brut}`).join('\n')}
+${toClassify.map(({ ligne }, i) => `${i}: ${ligne.texte_brut}`).join('\n')}
 
 Réponds UNIQUEMENT en JSON valide, un tableau dans le MÊME ORDRE :
 [{ "nom_propre": "...", "type": "alimentaire", "category": "...", "storage": "garde_manger", "quantity": 500, "unit": "g", "confiance": "haute" }, ...]`
@@ -1284,17 +1327,22 @@ Réponds UNIQUEMENT en JSON valide, un tableau dans le MÊME ORDRE :
       const text = data.content?.map((b) => b.text || '').join('') || ''
       const classified = JSON.parse(text.replace(/```json|```/g, '').trim())
 
-      if (!Array.isArray(classified) || classified.length !== lignes.length) {
-        return lignes // format inattendu — on continue avec les données brutes plutôt que planter
+      if (!Array.isArray(classified) || classified.length !== toClassify.length) {
+        // format inattendu — les lignes non résolues gardent leurs données
+        // brutes plutôt que de planter tout le scan
+        toClassify.forEach(({ ligne, i }) => {
+          resolved[i] = ligne
+        })
+        return resolved
       }
 
-      return lignes.map((l, i) => {
-        const c = classified[i] || {}
+      toClassify.forEach(({ ligne, i }, idx) => {
+        const c = classified[idx] || {}
         const parsedQty = parseFloat(c.quantity)
-        return {
-          ...l,
-          nom_propre: c.nom_propre || l.texte_brut,
-          type: c.type || l.type || 'alimentaire',
+        resolved[i] = {
+          ...ligne,
+          nom_propre: c.nom_propre || ligne.texte_brut,
+          type: c.type || ligne.type || 'alimentaire',
           category: c.category || 'Autre',
           storage: c.storage || 'garde_manger',
           quantity: !isNaN(parsedQty) && parsedQty > 0 ? parsedQty : 1,
@@ -1308,11 +1356,17 @@ Réponds UNIQUEMENT en JSON valide, un tableau dans le MÊME ORDRE :
           confianceNom: c.confiance === 'basse' ? 'basse' : 'haute',
         }
       })
+
+      return resolved
     } catch {
       // Échec de la classification — pas grave, on continue avec les
       // données brutes plutôt que de bloquer tout le scan pour cette
-      // étape optionnelle
-      return lignes
+      // étape optionnelle (seules les lignes non résolues par le
+      // dictionnaire sont concernées)
+      toClassify.forEach(({ ligne, i }) => {
+        resolved[i] = ligne
+      })
+      return resolved
     }
   }
 
@@ -1458,8 +1512,11 @@ Réponds UNIQUEMENT en JSON valide :
       setPdfLoading(false)
 
       // Classification — cette étape manquait entièrement avant, d'où le
-      // mélange alimentaire/non-alimentaire et le "tout au garde-manger"
-      parsed.lignes = await cleanupLigneNames(parsed.lignes)
+      // mélange alimentaire/non-alimentaire et le "tout au garde-manger".
+      // Même enseigne que celle stockée dans scanResult ci-dessus, pour
+      // que la clé du dictionnaire d'abréviations corresponde à celle
+      // utilisée lors d'une correction manuelle sur ce même import.
+      parsed.lignes = await cleanupLigneNames(parsed.lignes, parsed.enseigne || 'Commande Drive')
 
       setOffLoading(true)
       const { items, cacheHits } = await matchLinesToProducts(parsed.lignes)
@@ -1537,7 +1594,7 @@ Réponds UNIQUEMENT en JSON valide :
 
       // Nettoyage des noms — étape séparée de la recherche OFF (voir
       // commentaire sur cleanupLigneNames). Se fait AVANT le matching.
-      parsed.lignes = await cleanupLigneNames(parsed.lignes)
+      parsed.lignes = await cleanupLigneNames(parsed.lignes, parsed.enseigne)
 
       setOffLoading(true)
       const { items, cacheHits } = await matchLinesToProducts(parsed.lignes)
