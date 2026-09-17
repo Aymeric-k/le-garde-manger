@@ -94,6 +94,15 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Dictionnaire d'abréviations PARTAGÉ — même politique que le cache
+    // produit ci-dessus : lecture pour tous, écriture admin uniquement
+    // (voir useSharedAbbreviationDictionary.js pour la justification de
+    // ce choix plutôt qu'une écriture ouverte à tout utilisateur).
+    match /shared_abbreviation_dictionary/{key} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
     // Tout le reste est refusé par défaut
     match /{document=**} {
       allow read, write: if false;

@@ -4,6 +4,10 @@ import BarcodeScanner from './components/BarcodeScanner'
 import { searchProduct, getProductByBarcode } from './services/openFoodFacts'
 import { useAuth } from './hooks/useAuth'
 import { useSharedProductCache, writeSharedProduct } from './hooks/useSharedProductCache'
+import {
+  useSharedAbbreviationDictionary,
+  writeSharedAbbreviation,
+} from './hooks/useSharedAbbreviationDictionary'
 import { httpsCallable } from 'firebase/functions'
 import { functions } from './config/firebase'
 import {
@@ -61,11 +65,11 @@ const STORAGE_TYPES = [
   { id: 'garde_manger', label: 'Garde-manger', icon: '🏺', color: C.terra },
 ]
 
-// ⚠️ Remplace par ton vrai UID Firebase — visible dans Firebase Console
-// → Authentication → Users, une fois connecté au moins une fois.
-// Seuls ces comptes peuvent écrire dans le cache produit PARTAGÉ
-// (voir useSharedProductCache.js et firestore.rules).
-const ADMIN_UIDS = ['REMPLACE_PAR_TON_UID']
+// Seuls ces comptes peuvent écrire dans les données PARTAGÉES (cache
+// produit, dictionnaire d'abréviations) — doit rester synchronisé avec
+// isAdmin() dans firestore.rules, seul endroit où la protection réelle
+// s'applique (ce check côté client n'est qu'un confort d'UX).
+const ADMIN_UIDS = ['FH9xwVbW4lSzw4QH7pDqegkOQWt2']
 
 const CATEGORIES = [
   'Légumes',
@@ -594,6 +598,7 @@ function ManualCartAdd({ onAdd }) {
 export default function App() {
   const { user, isLoading: authLoading, isAuthenticated, login, logout } = useAuth()
   const sharedProductCache = useSharedProductCache()
+  const sharedAbbreviationDictionary = useSharedAbbreviationDictionary()
   const isAdmin = !!user && ADMIN_UIDS.includes(user.uid)
 
   const [tab, setTab] = useState('frigo')
@@ -1186,8 +1191,8 @@ export default function App() {
     const texteBrutKey = normalizeAbbrevKey(texteBrut)
     if (!texteBrutKey) return
     const enseigneKey = normalizeAbbrevKey(enseigne) || 'enseigne_inconnue'
-
-    mergeFirestoreDocField(user?.uid, 'abbreviationDictionary', `${enseigneKey}__${texteBrutKey}`, {
+    const key = `${enseigneKey}__${texteBrutKey}`
+    const entry = {
       enseigne: enseigne || null,
       texteBrut,
       nom_propre: result.nom_propre,
@@ -1197,17 +1202,32 @@ export default function App() {
       quantity: result.quantity ?? 1,
       unit: result.unit || 'pièce(s)',
       correctedAt: new Date().toISOString(),
-    })
+    }
+
+    mergeFirestoreDocField(user?.uid, 'abbreviationDictionary', key, entry)
+
+    // Phase 3 — si le compte courant est admin, la correction alimente
+    // AUSSI le dictionnaire partagé : tout le monde en profite pour la
+    // même enseigne, pas seulement toi (voir useSharedAbbreviationDictionary
+    // pour la justification du choix admin-only en écriture partagée).
+    if (isAdmin) {
+      writeSharedAbbreviation(key, entry)
+    }
   }
 
-  // Phase 2 — lecture. Même clé que l'écriture (enseigne + texte brut
-  // normalisés). Retourne le résultat de classification mémorisé, ou
-  // null si cette ligne n'a jamais été corrigée pour cette enseigne.
+  // Phase 2/3 — lecture. Même clé que l'écriture (enseigne + texte brut
+  // normalisés). Consulte d'abord le dictionnaire personnel, puis le
+  // partagé en repli — priorité au personnel car l'utilisateur a pu
+  // corriger différemment pour une raison qui lui est propre (ex: sa
+  // façon de ranger un produit peut différer de celle de l'admin).
+  // Retourne null si cette ligne n'a jamais été corrigée par personne
+  // pour cette enseigne.
   function getAbbreviationMatch(enseigne, texteBrut) {
     const texteBrutKey = normalizeAbbrevKey(texteBrut)
     if (!texteBrutKey) return null
     const enseigneKey = normalizeAbbrevKey(enseigne) || 'enseigne_inconnue'
-    return abbreviationDictionary[`${enseigneKey}__${texteBrutKey}`] || null
+    const key = `${enseigneKey}__${texteBrutKey}`
+    return abbreviationDictionary[key] || sharedAbbreviationDictionary[key] || null
   }
 
   // ═══════════════════════════════════════════════════════════════
