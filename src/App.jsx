@@ -1110,26 +1110,37 @@ export default function App() {
     return (name || '').toLowerCase().trim().replace(/\s+/g, ' ')
   }
 
-  function recordPrice({ name, barcode, price, source }) {
+  function recordPrice({ name, barcode, price, source, enseigne }) {
     const numPrice = parseFloat(price)
     if (!numPrice || numPrice <= 0) return // ignore prix vide/invalide — ne pollue pas l'historique
 
     const key = barcode ? `bc_${barcode}` : `nm_${normalizePriceKey(name)}`
+    const now = new Date().toISOString()
     // On part de l'état local en mémoire (priceHistory) pour construire
     // l'historique de CETTE clé précise — même s'il est parfois légèrement
     // périmé de quelques centaines de ms, ça ne concerne que cette clé.
     // L'écriture elle-même est ciblée (merge sur cette seule clé), donc
     // aucun risque d'écraser les prix des AUTRES produits en cours d'ajout.
     const existing = priceHistory[key]?.entries || []
-    const entries = [
-      ...existing,
-      { price: numPrice, date: new Date().toISOString(), source },
-    ].slice(-8) // garde les 8 derniers prix — suffisant pour une médiane stable
+    const entries = [...existing, { price: numPrice, date: now, source }].slice(-8) // garde les 8 derniers prix — suffisant pour une médiane stable (agrégat, sert getPriceEstimate ci-dessous)
+
+    // Historique COMPLET — contrairement à `entries` ci-dessus (fenêtre
+    // glissante de 8 valeurs, uniquement pour la médiane), rien n'est
+    // jamais tronqué ici. Une donnée de prix non capturée ne se retrouve
+    // plus jamais ; les deux structures coexistent délibérément : `entries`
+    // pour l'estimation de budget courante, `fullHistory` pour ne rien
+    // perdre (analyse future, litige de prix, historique par enseigne...).
+    const existingFullHistory = priceHistory[key]?.fullHistory || []
+    const fullHistory = [
+      ...existingFullHistory,
+      { price: numPrice, enseigne: enseigne || null, date: now, productId: key, source },
+    ]
 
     mergeFirestoreDocField(user?.uid, 'priceHistory', key, {
       name,
       barcode: barcode || null,
       entries,
+      fullHistory,
     })
   }
 
@@ -3476,13 +3487,16 @@ Réponds UNIQUEMENT en JSON valide :
                               const nom = (item.nom_propre || item.texte_brut).trim()
 
                               // Prix réel du ticket — enregistré dans l'historique pour
-                              // affiner les futures estimations de liste de courses
+                              // affiner les futures estimations de liste de courses.
+                              // L'enseigne du ticket est capturée dans l'historique
+                              // complet (voir recordPrice) pour ne pas la perdre.
                               if (item.prix) {
                                 recordPrice({
                                   name: nom,
                                   barcode: item.barcode,
                                   price: item.prix,
                                   source: 'ticket',
+                                  enseigne: scanResult?.enseigne,
                                 })
                               }
 
