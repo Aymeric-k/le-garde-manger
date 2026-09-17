@@ -1349,7 +1349,13 @@ Réponds UNIQUEMENT en JSON valide, un tableau dans le MÊME ORDRE :
         body: JSON.stringify({
           proxy_token: 'lgm_2024_xK9mP3',
           model: 'gpt-4o-mini',
-          max_tokens: 3000,
+          // 3000 suffisait pour un ticket de caisse classique, mais une
+          // facture PDF (potentiellement 60+ lignes en un seul lot) dépasse
+          // cette limite : la réponse JSON est tronquée, le parse échoue,
+          // et on retombe sur les lignes brutes non classifiées (d'où un
+          // générique "Autre / Garde-manger" partout). Plafond de capacité
+          // relevé — les règles de classification elles-mêmes ne changent pas.
+          max_tokens: 12000,
           temperature: 0,
           messages: [{ role: 'user', content: prompt }],
         }),
@@ -1476,11 +1482,44 @@ Réponds UNIQUEMENT en JSON valide, un tableau dans le MÊME ORDRE :
       const arrayBuffer = await file.arrayBuffer()
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
 
-      let fullText = ''
+      const pageTexts = []
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i)
         const content = await page.getTextContent()
-        fullText += content.items.map((it) => it.str).join(' ') + '\n'
+        pageTexts.push(content.items.map((it) => it.str).join(' '))
+      }
+
+      // Les documents multi-pages (factures...) répètent souvent tout
+      // l'en-tête (vendeur, client, n° de facture...) en haut de chaque
+      // nouvelle page, y compris quand une section continue sur la page
+      // suivante — un bloc de texte IDENTIQUE au début de chaque page.
+      // Le garder perturbe la structuration IA en aval : elle peut
+      // confondre la répétition avec du contenu déjà vu et sauter les
+      // articles juste après. On le détecte en comparant chaque page au
+      // préfixe de la première (déterministe, ne dépend pas du modèle),
+      // et on le retire des pages suivantes avant de les concaténer.
+      const sharedHeaderLen =
+        pageTexts.length > 1
+          ? Math.min(
+              ...pageTexts.slice(1).map((pageText) => {
+                let len = 0
+                while (
+                  len < pageTexts[0].length &&
+                  len < pageText.length &&
+                  pageTexts[0][len] === pageText[len]
+                )
+                  len++
+                return len
+              })
+            )
+          : 0
+      // Ne retire le préfixe partagé que s'il est substantiel (un vrai
+      // en-tête répété), pas juste quelques caractères communs par hasard
+      const headerCut = sharedHeaderLen > 100 ? sharedHeaderLen : 0
+
+      let fullText = pageTexts[0] || ''
+      for (let i = 1; i < pageTexts.length; i++) {
+        fullText += '\n' + pageTexts[i].slice(headerCut)
       }
 
       if (!fullText.trim()) {
@@ -1493,29 +1532,61 @@ Réponds UNIQUEMENT en JSON valide, un tableau dans le MÊME ORDRE :
       }
 
       // Structuration du texte brut en lignes produit — prompt texte
-      // uniquement (pas de vision), donc plus rapide et moins cher
-      const prompt = `Tu reçois le texte brut extrait d'une commande drive (supermarché en ligne).
-Ce texte peut être mal formaté (colonnes fusionnées, espaces multiples) car extrait automatiquement d'un PDF.
+      // uniquement (pas de vision), donc plus rapide et moins cher.
+      // Couvre deux formats : le récapitulatif de préparation de commande
+      // (liste simple, déjà géré) et la FACTURE téléchargée depuis
+      // l'espace client (tableau Désignation/Quantité/Prix HT/Taux TVA/
+      // Total TTC, avec lignes de détail Origine/Calibre/Variété et
+      // en-têtes de rayon à filtrer).
+      const prompt = `Tu reçois le texte brut extrait d'un document de commande drive (supermarché en ligne) — soit un récapitulatif de préparation de commande, soit une FACTURE téléchargée depuis l'espace client. Ce texte peut être mal formaté (colonnes fusionnées, espaces multiples) car extrait automatiquement d'un PDF.
 
-Ta mission : identifier chaque article commandé avec son prix.
+Ta mission : identifier chaque article acheté avec le prix RÉELLEMENT PAYÉ pour cette ligne.
 
-RÈGLES :
+RÈGLES GÉNÉRALES :
 - Une ligne = un article avec son prix associé
-- Ignore : sous-total, frais de livraison, total, TVA, informations de compte/adresse
-- Si une quantité est indiquée (ex: "x2", "2 unités"), garde-la dans le texte
-- Copie le texte le plus fidèlement possible — ne cherche pas à le nettoyer,
+- Si une quantité/un poids est indiqué dans le nom de l'article (ex: "x2", "500g"), garde-le dans le texte
+- Copie le nom de l'article le plus fidèlement possible — ne cherche pas à le nettoyer,
   ça sera fait dans une étape séparée
+- Ignore : sous-totaux, totaux de commande/facture, frais de livraison, bons de réduction,
+  moyen de paiement (carte bancaire...), récapitulatif de TVA par taux, informations de
+  compte/adresse client, mentions légales
+
+SI LE DOCUMENT EST UNE FACTURE avec un tableau à colonnes "Désignation / Quantité / Prix
+unitaire HT / Taux TVA / Total TTC" (souvent dans cet ordre visuel, mais parfois mélangé
+à l'extraction) :
+- Chaque ligne d'article se termine par 4 nombres : quantité, prix unitaire HT, taux de
+  TVA, puis Total TTC. Le prix à retenir est TOUJOURS le DERNIER nombre de la ligne
+  (Total TTC) — jamais le prix unitaire HT (hors taxes, et souvent différent du total
+  réellement payé pour cette ligne)
+- Ignore les en-têtes de rayon en majuscules suivis de "(N produits)"
+  (ex: "FRUITS LÉGUMES (10 produits)") — ce sont des titres de section, pas des articles
+- Ignore les lignes de détail SANS prix propre qui suivent parfois un article
+  (ex: "Origine : FRANCE • Catégorie : CAT-1- • Calibre : 25/35MM") — c'est de
+  l'information complémentaire sur l'article juste au-dessus, pas un article séparé
+  à zéro euro
+- La date à retenir est celle du ticket/de la commande (ex: "Ticket 21/04/2026" ou
+  "Commande n°... du 21/04/2026"), JAMAIS la "Date impression" qui n'est que la date
+  de téléchargement du document
+- L'enseigne à retenir est le nom du magasin dans l'en-tête VENDEUR en haut du document
+  (ex: "Centre E.Leclerc" + ville) — jamais le nom/adresse du CLIENT destinataire de la
+  facture, qui apparaît juste à côté dans le document
+- Le document fait plusieurs pages : le bloc en-tête vendeur/client/facture (coordonnées,
+  numéro de facture, date d'impression...) et parfois le titre de la section en cours SE
+  RÉPÈTENT en haut de chaque nouvelle page, y compris quand une section continue sur la
+  page suivante. Cette répétition n'est PAS un doublon du contenu déjà vu : traite chaque
+  article qui la suit comme un nouvel article à part entière, ne saute jamais de lignes
+  juste après une répétition d'en-tête ou de titre de section
 
 Texte du PDF :
 ---
-${fullText.slice(0, 6000)}
+${fullText.slice(0, 20000)}
 ---
 
 Réponds UNIQUEMENT en JSON valide :
 {
-  "enseigne": "Nom du drive si identifiable, sinon null",
+  "enseigne": "Nom du magasin si identifiable, sinon null",
   "lieu": null,
-  "date": "date de commande si visible, sinon null",
+  "date": "date du ticket/de la commande si visible, sinon null",
   "lignes": [
     { "texte_brut": "Nom exact de l'article", "prix": 3.45, "poids": "500g", "section": null }
   ]
@@ -1527,7 +1598,7 @@ Réponds UNIQUEMENT en JSON valide :
         body: JSON.stringify({
           proxy_token: 'lgm_2024_xK9mP3',
           model: 'gpt-4o-mini',
-          max_tokens: 4000,
+          max_tokens: 10000,
           messages: [{ role: 'user', content: prompt }],
         }),
       })
