@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import TicketCamera from './components/TicketCamera'
 import BarcodeScanner from './components/BarcodeScanner'
 import { searchProduct, getProductByBarcode } from './services/openFoodFacts'
+import { checkAndIncrementQuota } from './services/quota'
 import { useAuth } from './hooks/useAuth'
 import { useSharedProductCache, writeSharedProduct } from './hooks/useSharedProductCache'
 import {
@@ -1466,6 +1467,21 @@ Réponds UNIQUEMENT en JSON valide, un tableau dans le MÊME ORDRE :
   // avant de passer par le même moteur de matching (cache + OFF).
   const importDrivePdf = async (file) => {
     if (!file) return
+
+    // Quota AVANT l'action coûteuse (extraction + classification GPT),
+    // jamais après — même compteur "scans" que le scan de ticket, voir
+    // src/services/quota.js. Sans compte connecté, rien ne persiste de
+    // toute façon (ingredients/priceHistory n'écrivent que si un uid
+    // existe) : pas de quota à faire respecter à personne.
+    if (user?.uid) {
+      const scanQuota = await checkAndIncrementQuota(user.uid, 'scans')
+      if (!scanQuota.allowed) {
+        setScanResult({ error: true, quotaExceeded: true, quotaLimit: scanQuota.limit })
+        setShowScanPanel(true)
+        return
+      }
+    }
+
     setPdfLoading(true)
     setScanResult(null)
     setScanPhases({ items: [] })
@@ -1649,6 +1665,16 @@ Réponds UNIQUEMENT en JSON valide :
     }
     if (!isAuthenticated) {
       setScanResult({ error: true, needsAuth: true })
+      setShowScanPanel(true)
+      return
+    }
+
+    // Quota AVANT l'action coûteuse (Document AI), jamais après. En
+    // bêta (betaUnlimited), ne bloque jamais mais compte quand même —
+    // voir src/services/quota.js.
+    const scanQuota = await checkAndIncrementQuota(user.uid, 'scans')
+    if (!scanQuota.allowed) {
+      setScanResult({ error: true, quotaExceeded: true, quotaLimit: scanQuota.limit })
       setShowScanPanel(true)
       return
     }
@@ -2146,6 +2172,30 @@ Statuts : "disponible", "substituable", "manquant"`
 
   const generateRecipes = async () => {
     if (!ingredients.length) return
+
+    // Quota AVANT l'action coûteuse (génération GPT), jamais après —
+    // voir src/services/quota.js. Sans compte connecté, rien ne
+    // persisterait de toute façon, pas de quota à faire respecter.
+    if (user?.uid) {
+      const recipeQuota = await checkAndIncrementQuota(user.uid, 'recipes')
+      if (!recipeQuota.allowed) {
+        setRecipeResult([
+          {
+            id: 'quota',
+            nom: 'Limite mensuelle atteinte',
+            emoji: '🚦',
+            description: `Tu as utilisé tes ${recipeQuota.limit} générations de recettes gratuites ce mois-ci. Reviens le mois prochain !`,
+            etapes: [],
+          },
+        ])
+        setTimeout(
+          () => recipeResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+          100
+        )
+        return
+      }
+    }
+
     setRecipeLoading(true)
     setRecipeResult(null)
     setExpandedRecipe(null)
@@ -3199,10 +3249,23 @@ Réponds UNIQUEMENT en JSON valide :
               ) : scanResult?.error ? (
                 <div style={{ textAlign: 'center', padding: '32px 0' }}>
                   <div style={{ fontSize: '30px', marginBottom: '8px' }}>
-                    {scanResult.authNotReady || scanResult.needsAuth ? '🔐' : '❌'}
+                    {scanResult.authNotReady || scanResult.needsAuth
+                      ? '🔐'
+                      : scanResult.quotaExceeded
+                        ? '🚦'
+                        : '❌'}
                   </div>
                   <div style={{ color: C.textMid, fontSize: '13px', marginBottom: '16px' }}>
-                    {scanResult.authNotReady ? (
+                    {scanResult.quotaExceeded ? (
+                      <>
+                        Limite mensuelle atteinte.
+                        <br />
+                        <span style={{ fontSize: '11px', color: C.textLight }}>
+                          Tu as utilisé tes {scanResult.quotaLimit} scans gratuits ce mois-ci.
+                          Reviens le mois prochain !
+                        </span>
+                      </>
+                    ) : scanResult.authNotReady ? (
                       <>
                         Ta session se charge encore.
                         <br />
