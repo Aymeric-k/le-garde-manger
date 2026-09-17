@@ -76,6 +76,13 @@ service cloud.firestore {
         allow read, write: if isOwner(userId);
       }
 
+      // Un document par lot de recettes généré — voir generateRecipes
+      // dans App.jsx (instrumentation rétention : croiser avec cookLogs
+      // pour mesurer le taux généré → cuisiné selon la taille du frigo).
+      match /recipeGenerations/{generationId} {
+        allow read, write: if isOwner(userId);
+      }
+
       // Données en forme d'objet (pas de liste) — priceHistory,
       // productCache. Un seul document par type de donnée.
       match /meta/{docName} {

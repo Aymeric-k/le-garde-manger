@@ -609,6 +609,14 @@ export default function App() {
   const [users, setUsers] = useFirestoreCollection(user?.uid, 'users_profile', [])
   const [ratings, setRatings] = useFirestoreCollection(user?.uid, 'ratings', [])
   const [cookLogs, setCookLogs] = useFirestoreCollection(user?.uid, 'cookLogs', [])
+  // Un document par LOT de génération (generateRecipes produit 3 recettes
+  // d'un coup) — capture le contexte au moment de générer (nombre
+  // d'ingrédients, modes actifs) pour pouvoir croiser avec cookLogs
+  // ensuite et mesurer le taux généré → cuisiné. Voir generateRecipes et
+  // submitCookFeedback ci-dessous. Écriture seule ici — la lecture se
+  // fait directement via Firestore (pas de tableau de bord dans l'app
+  // pour l'instant), d'où la valeur ignorée.
+  const [, setRecipeGenerations] = useFirestoreCollection(user?.uid, 'recipeGenerations', [])
   const [nonFood, setNonFood] = useFirestoreCollection(user?.uid, 'nonFood', [])
   const [mealHistory, setMealHistory] = useFirestoreCollection(user?.uid, 'mealHistory', [])
   const [manualCart, setManualCart] = useFirestoreCollection(user?.uid, 'manualCart', [])
@@ -2361,7 +2369,32 @@ Réponds UNIQUEMENT en JSON valide :
       const data = await res.json()
       const text = data.content?.map((b) => b.text || '').join('') || ''
       const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
-      setRecipeResult(parsed.recettes || [])
+
+      // Instrumentation rétention — un seul événement pour tout le LOT
+      // généré (les 3 recettes partagent le même contexte : inventaire,
+      // modes actifs, horodatage). Chaque recette est taguée avec ce même
+      // generationId pour que "J'ai cuisiné ça" puisse plus tard relier
+      // le cookLog à sa génération d'origine (voir submitCookFeedback).
+      // Ne compte QUE les générations qui aboutissent réellement — pas
+      // les tentatives bloquées par le quota (retour anticipé plus haut)
+      // ni les échecs (bloc catch ci-dessous).
+      const generationId = Date.now()
+      const recettesGenerees = (parsed.recettes || []).map((r) => ({ ...r, generationId }))
+      setRecipeResult(recettesGenerees)
+      setRecipeGenerations((p) => [
+        ...p,
+        {
+          id: generationId,
+          ingredientCount: ingredients.length,
+          modeSoiree,
+          modeVideFrigo,
+          modeBudget: !!weeklyBudget,
+          convivesCount: selectedConvives.length,
+          recipeCount: recettesGenerees.length,
+          date: new Date().toISOString(),
+        },
+      ])
+
       setTimeout(
         () => recipeResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
         100
@@ -2451,6 +2484,12 @@ Propose une adaptation immédiate, simple, en gardant le même esprit de plat. R
         id: Date.now(),
         recipeId: cookTarget.id,
         recipeName: cookTarget.nom,
+        // Référence vers le lot de génération d'origine (voir
+        // generateRecipes) — absent si la recette vient d'ailleurs
+        // (analyse photo/texte, pas de generateRecipes derrière) plutôt
+        // que d'une génération IA classique. C'est ce qui permet de
+        // croiser "généré avec X ingrédients" et "effectivement cuisiné".
+        generationId: cookTarget.generationId || null,
         difficulty: cookFeedback.difficulty,
         remark: cookFeedback.remark,
         date: new Date().toISOString(),
