@@ -881,6 +881,7 @@ export default function App() {
     // toutes les lignes sélectionnées.
     if (pendingBarcodeProduct.source === 'ticket') {
       const { idx } = pendingBarcodeProduct
+      const previousItem = scanPhases.items[idx]
       setScanPhases((p) => ({
         ...p,
         items: p.items.map((item, i) =>
@@ -902,6 +903,24 @@ export default function App() {
             : item
         ),
       }))
+
+      // Mémorise cette correction pour l'enseigne du ticket — la prochaine
+      // fois que ce même texte brut apparaît sur un ticket de la même
+      // enseigne, la classification pourra être résolue instantanément
+      // sans repasser par l'IA (voir recordAbbreviationCorrection).
+      recordAbbreviationCorrection({
+        enseigne: scanResult?.enseigne,
+        texteBrut: pendingBarcodeProduct.ticketRawText,
+        result: {
+          nom_propre: pendingBarcodeProduct.name.trim(),
+          type: previousItem?.type,
+          category: pendingBarcodeProduct.category,
+          storage: pendingBarcodeProduct.storage,
+          quantity: parseFloat(pendingBarcodeProduct.quantity) || 1,
+          unit: pendingBarcodeProduct.unit,
+        },
+      })
+
       setShowBarcodeConfirm(false)
       setPendingBarcodeProduct(null)
       return
@@ -1131,6 +1150,51 @@ export default function App() {
 
     const base = PRICE_FALLBACK_BY_CATEGORY[category] || 3
     return { estimated: base, confidence: 'low', source: 'estimation par catégorie' }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // DICTIONNAIRE D'ABRÉVIATIONS PAR ENSEIGNE
+  // ═══════════════════════════════════════════════════════════════
+  // Distinct du cache produit ci-dessus : le cache produit mémorise une
+  // IDENTITÉ produit (nom propre, catégorie, image), retrouvable par nom
+  // ou code-barres, tous magasins confondus. Ici on mémorise une
+  // CORRESPONDANCE texte brut du ticket → résultat de classification
+  // complet (nom, type, catégorie, stockage, quantité, unité), propre à
+  // une enseigne — car une même abréviation ("BISC.CHOC.PTIT DEJ") peut
+  // désigner des produits différents selon le magasin qui l'imprime.
+  //
+  // Phase 1 (actuelle) : uniquement l'écriture, déclenchée quand une
+  // correction manuelle de ligne de ticket est validée. La lecture (qui
+  // permettra de sauter l'appel IA quand la correspondance est déjà
+  // connue) arrive dans une phase suivante.
+
+  function normalizeAbbrevKey(str) {
+    return (str || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '') // accents
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+  }
+
+  function recordAbbreviationCorrection({ enseigne, texteBrut, result }) {
+    if (!texteBrut?.trim() || !result?.nom_propre?.trim()) return
+
+    const texteBrutKey = normalizeAbbrevKey(texteBrut)
+    if (!texteBrutKey) return
+    const enseigneKey = normalizeAbbrevKey(enseigne) || 'enseigne_inconnue'
+
+    mergeFirestoreDocField(user?.uid, 'abbreviationDictionary', `${enseigneKey}__${texteBrutKey}`, {
+      enseigne: enseigne || null,
+      texteBrut,
+      nom_propre: result.nom_propre,
+      type: result.type || 'alimentaire',
+      category: result.category || null,
+      storage: result.storage || null,
+      quantity: result.quantity ?? 1,
+      unit: result.unit || 'pièce(s)',
+      correctedAt: new Date().toISOString(),
+    })
   }
 
   // ═══════════════════════════════════════════════════════════════
