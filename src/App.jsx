@@ -2220,12 +2220,15 @@ Statuts : "disponible", "substituable", "manquant"`
         .filter(Boolean)
         .join(', ') || 'Aucun'
 
-    // Ingrédients — mode vide-frigo priorise les expirants
+    // Ingrédients — mode vide-frigo priorise les expirants. L'id est
+    // exposé pour que le modèle puisse le recopier tel quel dans le
+    // manifeste structuré (stock_utilise) — voir plus bas — au lieu de
+    // ne référencer les ingrédients que par leur nom en prose.
     const ingList = ingredients
       .map((i) => {
         const d = getDaysLeft(i.dlc)
         const urgent = d !== null && d <= 2
-        return `${i.name} (${i.quantity}${i.unit}${urgent ? ' ⚠️URGENT' : ''})`
+        return `- id:${i.id} | ${i.name} (${i.quantity}${i.unit}${urgent ? ' ⚠️URGENT' : ''})`
       })
       .join('\n')
     // Taux de tolérance
@@ -2348,12 +2351,24 @@ Réponds UNIQUEMENT en JSON valide :
       "ingredients_detail": [
         { "nom": "Œufs", "quantite": 3, "unite": "pièce(s)" }
       ],
+      "stock_utilise": [
+        { "ingredientId": 1234567890, "quantiteUtilisee": 3, "unite": "pièce(s)" }
+      ],
       "etapes": ["Étape 1", "Étape 2"],
       "conseil": "Un conseil pratique",
       "termes_expliques": {}
     }
   ]
-}`
+}
+
+IMPORTANT pour "stock_utilise" : c'est un champ SÉPARÉ de "ingredients_detail",
+à ne remplir qu'avec les ingrédients RÉELLEMENT piochés dans la liste
+INGRÉDIENTS DISPONIBLES ci-dessus (jamais les ingrédients manquants/à
+acheter). Pour chaque ligne, "ingredientId" doit être recopié EXACTEMENT
+tel qu'il apparaît après "id:" dans cette liste (jamais un nom, jamais
+un id inventé). Si un ingrédient disponible n'est pas utilisé par la
+recette, ne l'inclus pas. Un même ingredientId ne doit apparaître qu'une
+seule fois par recette (additionne les quantités si besoin).`
 
     try {
       const res = await fetch('/app/api-proxy.php', {
@@ -2379,7 +2394,22 @@ Réponds UNIQUEMENT en JSON valide :
       // les tentatives bloquées par le quota (retour anticipé plus haut)
       // ni les échecs (bloc catch ci-dessous).
       const generationId = Date.now()
-      const recettesGenerees = (parsed.recettes || []).map((r) => ({ ...r, generationId }))
+
+      // Garde-fou contre l'hallucination : le modèle recopie des ids en
+      // théorie exacts, mais rien ne garantit qu'il ne s'en invente pas
+      // un ou n'en déforme pas un au passage. On ne fait confiance qu'aux
+      // lignes dont l'ingredientId correspond à un ingrédient RÉELLEMENT
+      // présent dans l'inventaire au moment de la génération — les autres
+      // sont silencieusement écartées plutôt que de fausser une future
+      // déduction de stock sur un id qui n'existe pas.
+      const validIngredientIds = new Set(ingredients.map((i) => String(i.id)))
+      const recettesGenerees = (parsed.recettes || []).map((r) => ({
+        ...r,
+        generationId,
+        stock_utilise: (r.stock_utilise || []).filter((s) =>
+          validIngredientIds.has(String(s.ingredientId))
+        ),
+      }))
       setRecipeResult(recettesGenerees)
       setRecipeGenerations((p) => [
         ...p,
@@ -2392,6 +2422,16 @@ Réponds UNIQUEMENT en JSON valide :
           convivesCount: selectedConvives.length,
           recipeCount: recettesGenerees.length,
           date: new Date().toISOString(),
+          // Manifeste structuré par recette — voir stock_utilise dans le
+          // prompt ci-dessus. Sert à la fois de trace d'audit (Phase 2 du
+          // chantier "déduction de stock") et de vérification manuelle :
+          // on peut comparer ces ingredientId à l'inventaire réel au
+          // moment T pour confirmer qu'ils ne sont pas approximatifs.
+          manifests: recettesGenerees.map((r) => ({
+            recipeId: r.id,
+            recipeName: r.nom,
+            stockUtilise: r.stock_utilise,
+          })),
         },
       ])
 
@@ -2476,8 +2516,55 @@ Propose une adaptation immédiate, simple, en gardant le même esprit de plat. R
     setShowCookPanel(true)
   }
 
+  // Déduit du stock les ingrédients réellement utilisés par la recette
+  // cuisinée, à partir du manifeste structuré capturé à la génération
+  // (voir stock_utilise dans generateRecipes). Ne fait AUCUNE conversion
+  // d'unité : soit l'unité du manifeste correspond exactement à celle de
+  // l'ingrédient en stock (déduction précise, ex: g contre g), soit elle
+  // ne correspond pas (ex: "200g" demandés contre un ingrédient stocké en
+  // "pièce(s)" sans grammage) et on se rabat sur un décompte d'une unité
+  // entière plutôt que de deviner un poids partiel qui fausserait
+  // silencieusement les données. Chaque ligne est renvoyée avec son type
+  // ('precise' | 'approximative') pour pouvoir mesurer la fréquence de ce
+  // repli — voir cookLogs.stockDeductions. Ne touche jamais aux
+  // ingrédients absents du manifeste (recette non générée par l'IA, ou
+  // ingrédient déjà supprimé manuellement depuis).
+  const applyStockDeduction = (manifest) => {
+    if (!manifest || manifest.length === 0) return []
+    const deductions = []
+    const updated = ingredients.map((ing) => {
+      const line = manifest.find((m) => String(m.ingredientId) === String(ing.id))
+      if (!line) return ing
+
+      const currentQty = parseFloat(ing.quantity) || 0
+      const sameUnit = (ing.unit || '').trim().toLowerCase() === (line.unite || '').trim().toLowerCase()
+      const type = sameUnit ? 'precise' : 'approximative'
+      const newQty = sameUnit
+        ? Math.max(0, currentQty - (parseFloat(line.quantiteUtilisee) || 0))
+        : Math.max(0, currentQty - 1)
+
+      deductions.push({
+        ingredientId: ing.id,
+        ingredientName: ing.name,
+        quantiteUtilisee: line.quantiteUtilisee,
+        unite: line.unite,
+        type,
+        quantityBefore: currentQty,
+        quantityAfter: newQty,
+      })
+
+      // Ingrédient épuisé : reste visible avec une quantité à 0 plutôt
+      // que supprimé — évite de perdre l'historique et laisse
+      // l'utilisateur décider de le retirer ou de le racheter.
+      return { ...ing, quantity: String(newQty) }
+    })
+    setIngredients(updated)
+    return deductions
+  }
+
   const submitCookFeedback = () => {
     if (!cookTarget) return
+    const stockDeductions = applyStockDeduction(cookTarget.stock_utilise)
     setCookLogs((p) => [
       ...p,
       {
@@ -2490,6 +2577,11 @@ Propose une adaptation immédiate, simple, en gardant le même esprit de plat. R
         // que d'une génération IA classique. C'est ce qui permet de
         // croiser "généré avec X ingrédients" et "effectivement cuisiné".
         generationId: cookTarget.generationId || null,
+        // Trace d'audit de la déduction de stock (voir applyStockDeduction
+        // ci-dessus) — tableau vide si la recette n'a pas de manifeste
+        // (pas générée par l'IA) plutôt qu'absent, pour distinguer "pas de
+        // manifeste" de "champ jamais écrit" lors d'une requête Firestore.
+        stockDeductions,
         difficulty: cookFeedback.difficulty,
         remark: cookFeedback.remark,
         date: new Date().toISOString(),
