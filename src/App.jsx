@@ -629,6 +629,28 @@ export default function App() {
   // Dictionnaire d'abréviations par enseigne — lecture seule ici, l'écriture
   // se fait via mergeFirestoreDocField dans recordAbbreviationCorrection.
   const [abbreviationDictionary] = useFirestoreDoc(user?.uid, 'abbreviationDictionary', {})
+  // Onboarding "premier scan" — completed passe à true une fois la
+  // première recette affichée avec succès (l'événement "activation" pour
+  // l'instrumentation de rétention J7/J30). Ne sert PAS seul à décider
+  // d'afficher l'écran de démarrage : combiné à ingredients.length === 0
+  // (voir renderFrigo) pour ne jamais le montrer à un compte déjà actif
+  // qui n'avait simplement pas encore ce champ.
+  const [onboarding, setOnboarding] = useFirestoreDoc(user?.uid, 'onboarding', {})
+  // true dès que l'utilisateur a choisi drive ou ticket depuis l'écran de
+  // démarrage — bascule l'écran de démarrage vers le flux d'import normal
+  // (voir renderFrigo) sans quoi le panneau de scan resterait masqué
+  // derrière l'écran de démarrage tant que l'inventaire est encore vide.
+  const [onboardingMode, setOnboardingMode] = useState(false)
+  // true entre la confirmation de l'import et la génération automatique
+  // de la Phase 3 — le déclenchement attend que `ingredients` reflète
+  // vraiment l'import (écriture Firestore asynchrone), pas juste que le
+  // clic ait eu lieu, sans quoi generateRecipes partirait sur un
+  // inventaire encore vide (voir l'effet juste après generateRecipes).
+  // Ref plutôt que state : c'est un simple loquet "à consommer une fois",
+  // pas une donnée qui doit elle-même déclencher un re-render — seul le
+  // changement de `ingredients` doit réveiller l'effet qui le consomme
+  // (voir plus bas). Évite d'appeler setState en cascade dans l'effet.
+  const onboardingPendingGenerationRef = useRef(false)
 
   // Migration unique localStorage → Firestore au premier login.
   // Tant que cette étape n'est pas branchée collection par collection
@@ -663,6 +685,15 @@ export default function App() {
   // demande, par ligne, via le bouton 🔍 (voir searchOffForLine).
   const [scanPhases, setScanPhases] = useState({ items: [] })
   const [offLoading, setOffLoading] = useState(false) // recherche OFF ponctuelle en cours (par ligne)
+  // Étape intermédiaire entre l'extraction (scanLoading/pdfLoading) et le
+  // matching Open Food Facts (offLoading) — cleanupLigneNames tournait
+  // sans aucun indicateur visuel, laissant l'écran de scan "vide" quelques
+  // secondes. Sert la vraie progression par étapes (voir renderScanPanel).
+  const [classifyLoading, setClassifyLoading] = useState(false)
+  // Distingue ticket/drive pour l'icône affichée pendant TOUTE la
+  // progression (pdfLoading/scanLoading redeviennent false dès l'étape 1
+  // terminée, donc insuffisants pour savoir quelle icône garder ensuite).
+  const [scanSource, setScanSource] = useState('ticket')
   // TODO: scan code-barres — à implémenter avec @zxing/library
   const [currentBarcodeTarget, setCurrentBarcodeTarget] = useState(null)
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
@@ -1491,6 +1522,7 @@ Réponds UNIQUEMENT en JSON valide, un tableau dans le MÊME ORDRE :
     }
 
     setPdfLoading(true)
+    setScanSource('drive')
     setScanResult(null)
     setScanPhases({ items: [] })
     setShowScanPanel(true)
@@ -1642,7 +1674,9 @@ Réponds UNIQUEMENT en JSON valide :
       // Même enseigne que celle stockée dans scanResult ci-dessus, pour
       // que la clé du dictionnaire d'abréviations corresponde à celle
       // utilisée lors d'une correction manuelle sur ce même import.
+      setClassifyLoading(true)
       parsed.lignes = await cleanupLigneNames(parsed.lignes, parsed.enseigne || 'Commande Drive')
+      setClassifyLoading(false)
 
       setOffLoading(true)
       const { items, cacheHits } = await matchLinesToProducts(parsed.lignes)
@@ -1654,6 +1688,7 @@ Réponds UNIQUEMENT en JSON valide :
       console.error('Erreur import PDF:', e)
       setScanResult({ error: true, pdfTechnicalError: e?.message || 'inconnue' })
       setPdfLoading(false)
+      setClassifyLoading(false)
       setOffLoading(false)
     }
   }
@@ -1688,6 +1723,7 @@ Réponds UNIQUEMENT en JSON valide :
     }
 
     setScanLoading(true)
+    setScanSource('ticket')
     setScanResult(null)
     setScanConfirm(null)
     setScanPhases({ items: [] })
@@ -1730,7 +1766,9 @@ Réponds UNIQUEMENT en JSON valide :
 
       // Nettoyage des noms — étape séparée de la recherche OFF (voir
       // commentaire sur cleanupLigneNames). Se fait AVANT le matching.
+      setClassifyLoading(true)
       parsed.lignes = await cleanupLigneNames(parsed.lignes, parsed.enseigne)
+      setClassifyLoading(false)
 
       setOffLoading(true)
       const { items, cacheHits } = await matchLinesToProducts(parsed.lignes)
@@ -1748,6 +1786,7 @@ Réponds UNIQUEMENT en JSON valide :
     } catch (e) {
       setScanResult({ error: true })
       setScanLoading(false)
+      setClassifyLoading(false)
       setOffLoading(false)
     }
   }
@@ -1797,6 +1836,78 @@ Réponds UNIQUEMENT en JSON valide :
     setLastTicketItems([])
     setPhotoCount(0)
   }
+
+  // Import définitif des lignes cochées de scanPhases.items vers
+  // ingredients/nonFood — logique du bouton "✓ Importer", extraite pour
+  // être appelable aussi bien depuis le flux normal que depuis l'écran
+  // de démarrage de l'onboarding (voir renderOnboardingStart), sans
+  // dupliquer cette boucle. Retourne le nombre d'articles réellement
+  // importés, pour que l'appelant sache s'il peut enchaîner (Phase 3).
+  const importScannedItems = () => {
+    const selected = scanPhases.items.filter((i) => i.selected)
+    selected.forEach((item) => {
+      const nom = (item.nom_propre || item.texte_brut).trim()
+
+      // Prix réel du ticket — enregistré dans l'historique pour
+      // affiner les futures estimations de liste de courses.
+      // L'enseigne du ticket est capturée dans l'historique
+      // complet (voir recordPrice) pour ne pas la perdre.
+      if (item.prix) {
+        recordPrice({
+          name: nom,
+          barcode: item.barcode,
+          price: item.prix,
+          source: 'ticket',
+          enseigne: scanResult?.enseigne,
+        })
+      }
+
+      // Cache produit — sauf si déjà connu (évite d'écraser
+      // une entrée déjà validée par une simple ré-apparition)
+      if (!item.fromCache) {
+        cacheProduct({
+          name: nom,
+          barcode: item.barcode,
+          category: item.category || null,
+          image: item.image || null,
+          marque: '',
+          source: 'ticket',
+        })
+      }
+
+      if (item.type === 'alimentaire') {
+        setIngredients((p) => [
+          ...p,
+          {
+            id: Date.now() + Math.random(),
+            name: nom,
+            quantity: String(item.quantity || 1),
+            unit: item.unit || 'pièce(s)',
+            category: item.category || 'Autre',
+            dlc: '',
+            storage: item.storage || 'garde_manger',
+            price: item.prix ? String(item.prix) : '',
+          },
+        ])
+      } else {
+        setNonFood((p) => [
+          ...p,
+          {
+            id: Date.now() + Math.random(),
+            name: nom,
+            quantity: String(item.quantity || 1),
+            unit: item.unit || 'pièce(s)',
+            category: item.category || 'Autre maison',
+            prix: item.prix,
+          },
+        ])
+      }
+    })
+    setShowScanPanel(false)
+    setScanPhases({ items: [] })
+    return selected.length
+  }
+
   const compressImage = (file, maxWidth = 2400) =>
     new Promise((resolve) => {
       const reader = new FileReader()
@@ -2411,6 +2522,18 @@ seule fois par recette (additionne les quantités si besoin).`
         ),
       }))
       setRecipeResult(recettesGenerees)
+
+      // Événement "activation" de l'onboarding — marqué ICI (première
+      // recette réellement affichée) plutôt qu'au moment de confirmer
+      // l'import : un import réussi suivi d'un échec de génération (API
+      // en carafe, quota...) ne doit jamais compter comme une activation,
+      // et ne bloque jamais non plus l'utilisateur — l'onglet Recettes
+      // reste utilisable normalement pour réessayer (voir le bouton
+      // habituel, plus caché derrière onboardingMode une fois ici).
+      if (onboardingMode) {
+        setOnboarding({ completed: true, completedAt: new Date().toISOString() })
+      }
+
       setRecipeGenerations((p) => [
         ...p,
         {
@@ -2452,6 +2575,27 @@ seule fois par recette (additionne les quantités si besoin).`
     }
     setRecipeLoading(false)
   }
+
+  // Phase 3 de l'onboarding "premier scan" — déclenche generateRecipes()
+  // automatiquement une fois l'inventaire importé, SANS que l'utilisateur
+  // ait à trouver le bouton lui-même. On attend que `ingredients` reflète
+  // vraiment l'import (écriture Firestore asynchrone via
+  // useFirestoreCollection — le simple clic ne suffit pas) plutôt que
+  // d'appeler generateRecipes() juste après importScannedItems(), ce qui
+  // partirait sur l'ancien inventaire encore vide à ce moment précis.
+  useEffect(() => {
+    if (!onboardingPendingGenerationRef.current || ingredients.length === 0) return
+    onboardingPendingGenerationRef.current = false
+    // Tolérance stricte (réglage par défaut) exigerait zéro ingrédient
+    // manquant — un risque réel d'échec sur un inventaire tout juste
+    // importé et encore imprévisible. Choix de compromis pour maximiser
+    // les chances d'une première recette réussie ; explicitement signalé
+    // plutôt qu'ajouté silencieusement (voir rapport de ce chantier).
+    setTolerance('libre')
+    setTab('recettes')
+    generateRecipes()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ingredients])
 
   // ── Adapt helpers
   const openAdapt = (recipe) => {
@@ -2879,9 +3023,133 @@ Réponds UNIQUEMENT en JSON valide :
   }
 
   // ── Frigo Tab ──────────────────────────────────────────────────
-  const renderFrigo = () => (
+  // Écran de démarrage "premier scan" — remplace l'interface normale
+  // (vide et intimidante) tant qu'un nouveau compte n'a encore aucun
+  // ingrédient. Drive en premier choix visuel (canal mis en avant dans
+  // le positionnement — inventaire fiable à 100%), ticket en alternative
+  // égale. Volontairement PAS de 3ème option "ajout manuel" ici : ça
+  // casserait la promesse "l'inventaire se remplit tout seul" qui porte
+  // tout ce parcours.
+  const renderOnboardingStart = () => (
+    <div
+      style={{
+        textAlign: 'center',
+        padding: '40px 16px 20px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '6px',
+      }}
+    >
+      <div style={{ fontSize: '44px', marginBottom: '4px' }}>🏺</div>
+      <div
+        style={{
+          fontFamily: "'Playfair Display',serif",
+          fontSize: '20px',
+          fontWeight: 700,
+          color: C.brown,
+        }}
+      >
+        Remplissons ton frigo
+      </div>
+      <div
+        style={{
+          fontSize: '13px',
+          color: C.textMid,
+          maxWidth: '300px',
+          marginBottom: '22px',
+          lineHeight: 1.4,
+        }}
+      >
+        Importe tes derniers achats et ton inventaire se construit tout seul.
+      </div>
+
+      <label
+        style={{
+          width: '100%',
+          maxWidth: '320px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '5px',
+          padding: '20px 16px',
+          borderRadius: '18px',
+          background: `linear-gradient(135deg,${C.brown}20,${C.brown}0a)`,
+          border: `2px solid ${C.brown}70`,
+          cursor: 'pointer',
+          marginBottom: '12px',
+          position: 'relative',
+          fontFamily: "'Lato',sans-serif",
+        }}
+      >
+        <span style={{ fontSize: '26px' }}>📄</span>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: C.brown }}>
+          As-tu une facture ou confirmation de commande drive récente ?
+        </span>
+        <span style={{ fontSize: '11px', color: C.textLight }}>
+          Carrefour, Leclerc, Intermarché... — inventaire fiable à 100%
+        </span>
+        <input
+          type='file'
+          accept='application/pdf'
+          style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
+          onChange={(e) => {
+            if (e.target.files?.[0]) {
+              setOnboardingMode(true)
+              importDrivePdf(e.target.files[0])
+            }
+            e.target.value = ''
+          }}
+        />
+      </label>
+
+      <button
+        onClick={() => {
+          setOnboardingMode(true)
+          setShowTicketCamera(true)
+        }}
+        style={{
+          width: '100%',
+          maxWidth: '320px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '5px',
+          padding: '16px',
+          borderRadius: '18px',
+          background: `linear-gradient(135deg,${C.green}18,${C.green}08)`,
+          border: `2px solid ${C.green}60`,
+          cursor: 'pointer',
+          fontFamily: "'Lato',sans-serif",
+        }}
+      >
+        <span style={{ fontSize: '22px' }}>🧾</span>
+        <span style={{ fontSize: '13px', fontWeight: 700, color: C.green }}>
+          Ou un ticket de caisse sous la main ?
+        </span>
+      </button>
+    </div>
+  )
+
+  const renderFrigo = () => {
+    // Combine le nouveau flag persisté (voir plus haut) avec un signal déjà
+    // existant (inventaire vide) plutôt que de se fier au seul flag — ça
+    // évite d'imposer rétroactivement cet écran à un compte déjà actif qui
+    // n'avait simplement pas encore ce champ en base.
+    const showOnboardingStart =
+      isAuthenticated &&
+      !authLoading &&
+      ingredients.length === 0 &&
+      !onboarding?.completed &&
+      !onboardingMode
+
+    return (
     <>
       <div style={st.content}>
+        {showOnboardingStart ? (
+          renderOnboardingStart()
+        ) : (
+        <>
         {!isAuthenticated && (
           <div
             style={{
@@ -3334,6 +3602,8 @@ Réponds UNIQUEMENT en JSON valide :
             )}
           </>
         )}
+        </>
+        )}
 
         {/* Scan confirm panel */}
         {showScanPanel && (
@@ -3360,23 +3630,75 @@ Réponds UNIQUEMENT en JSON valide :
                 boxShadow: `0 -8px 32px ${C.brown}30`,
               }}
             >
-              {scanLoading || pdfLoading ? (
-                <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                  <div style={{ fontSize: '32px', marginBottom: '12px' }}>
-                    {pdfLoading ? '📄' : '🧾'}
-                  </div>
-                  <div
-                    style={{
-                      fontFamily: "'Playfair Display',serif",
-                      fontSize: '16px',
-                      color: C.brown,
-                      marginBottom: '6px',
-                    }}
-                  >
-                    {pdfLoading ? 'Lecture de la commande...' : 'Lecture du ticket...'}
-                  </div>
-                  <div style={{ fontSize: '12px', color: C.textLight }}>Extraction en cours</div>
-                </div>
+              {scanLoading || pdfLoading || classifyLoading || offLoading ? (
+                (() => {
+                  // Progression réelle par étape plutôt qu'un simple spinner —
+                  // couvre aussi le "trou" qui existait entre l'extraction
+                  // (scanLoading/pdfLoading) et le matching OFF (offLoading),
+                  // pendant lequel cleanupLigneNames tournait sans aucun
+                  // indicateur visuel.
+                  const steps = [
+                    {
+                      label: scanSource === 'drive' ? 'Lecture de la commande' : 'Lecture du ticket',
+                      active: scanLoading || pdfLoading,
+                    },
+                    { label: 'Classification des articles', active: classifyLoading },
+                    { label: 'Recherche des fiches produits', active: offLoading },
+                  ]
+                  const currentIdx = steps.findIndex((s) => s.active)
+                  return (
+                    <div style={{ padding: '32px 12px' }}>
+                      <div style={{ fontSize: '32px', textAlign: 'center', marginBottom: '18px' }}>
+                        {scanSource === 'drive' ? '📄' : '🧾'}
+                      </div>
+                      {steps.map((step, i) => {
+                        const done = currentIdx === -1 || i < currentIdx
+                        const isCurrent = i === currentIdx
+                        return (
+                          <div
+                            key={step.label}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '10px',
+                              padding: '8px 4px',
+                              opacity: done || isCurrent ? 1 : 0.4,
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: '20px',
+                                height: '20px',
+                                borderRadius: '50%',
+                                flexShrink: 0,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                background: done ? C.green : isCurrent ? `${C.green}20` : C.bgInset,
+                                color: done ? '#fff' : C.green,
+                                border: isCurrent ? `2px solid ${C.green}` : 'none',
+                              }}
+                            >
+                              {done ? '✓' : isCurrent ? '' : i + 1}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: '13px',
+                                fontWeight: isCurrent ? 700 : 400,
+                                color: isCurrent ? C.brown : done ? C.textMid : C.textLight,
+                              }}
+                            >
+                              {step.label}
+                              {isCurrent ? '...' : ''}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()
               ) : scanResult?.error ? (
                 <div style={{ textAlign: 'center', padding: '32px 0' }}>
                   <div style={{ fontSize: '30px', marginBottom: '8px' }}>
@@ -3451,7 +3773,13 @@ Réponds UNIQUEMENT en JSON valide :
                         Se connecter
                       </Btn>
                     )}
-                    <Btn variant='outline' onClick={() => setShowScanPanel(false)}>
+                    <Btn
+                      variant='outline'
+                      onClick={() => {
+                        setShowScanPanel(false)
+                        if (onboardingMode) setOnboardingMode(false)
+                      }}
+                    >
                       Fermer
                     </Btn>
                   </div>
@@ -3739,78 +4067,34 @@ Réponds UNIQUEMENT en JSON valide :
                   )}
 
                   <div style={{ display: 'flex', gap: '8px', marginTop: '18px' }}>
-                    <Btn variant='outline' onClick={() => setShowScanPanel(false)}>
+                    <Btn
+                      variant='outline'
+                      onClick={() => {
+                        setShowScanPanel(false)
+                        // Rien d'importé — retour à l'écran de choix plutôt
+                        // que de laisser l'onboarding "coincé" en mode import.
+                        if (onboardingMode) setOnboardingMode(false)
+                      }}
+                    >
                       Annuler
                     </Btn>
                     <div style={{ flex: 1 }}>
                       <Btn
                         variant='green'
                         onClick={() => {
-                          scanPhases.items
-                            .filter((i) => i.selected)
-                            .forEach((item) => {
-                              const nom = (item.nom_propre || item.texte_brut).trim()
-
-                              // Prix réel du ticket — enregistré dans l'historique pour
-                              // affiner les futures estimations de liste de courses.
-                              // L'enseigne du ticket est capturée dans l'historique
-                              // complet (voir recordPrice) pour ne pas la perdre.
-                              if (item.prix) {
-                                recordPrice({
-                                  name: nom,
-                                  barcode: item.barcode,
-                                  price: item.prix,
-                                  source: 'ticket',
-                                  enseigne: scanResult?.enseigne,
-                                })
-                              }
-
-                              // Cache produit — sauf si déjà connu (évite d'écraser
-                              // une entrée déjà validée par une simple ré-apparition)
-                              if (!item.fromCache) {
-                                cacheProduct({
-                                  name: nom,
-                                  barcode: item.barcode,
-                                  category: item.category || null,
-                                  image: item.image || null,
-                                  marque: '',
-                                  source: 'ticket',
-                                })
-                              }
-
-                              if (item.type === 'alimentaire') {
-                                setIngredients((p) => [
-                                  ...p,
-                                  {
-                                    id: Date.now() + Math.random(),
-                                    name: nom,
-                                    quantity: String(item.quantity || 1),
-                                    unit: item.unit || 'pièce(s)',
-                                    category: item.category || 'Autre',
-                                    dlc: '',
-                                    storage: item.storage || 'garde_manger',
-                                    price: item.prix ? String(item.prix) : '',
-                                  },
-                                ])
-                              } else {
-                                setNonFood((p) => [
-                                  ...p,
-                                  {
-                                    id: Date.now() + Math.random(),
-                                    name: nom,
-                                    quantity: String(item.quantity || 1),
-                                    unit: item.unit || 'pièce(s)',
-                                    category: item.category || 'Autre maison',
-                                    prix: item.prix,
-                                  },
-                                ])
-                              }
-                            })
-                          setShowScanPanel(false)
-                          setScanPhases({ items: [] })
+                          const imported = importScannedItems()
+                          if (onboardingMode) {
+                            // La génération (Phase 3) attend que `ingredients`
+                            // reflète vraiment l'import avant de partir — voir
+                            // l'effet dédié plus bas, déclenché par ce flag.
+                            if (imported > 0) onboardingPendingGenerationRef.current = true
+                            else setOnboardingMode(false) // rien d'importé, retour à l'écran de choix
+                          }
                         }}
                       >
-                        ✓ Importer ({scanPhases.items.filter((i) => i.selected).length})
+                        {onboardingMode
+                          ? "C'est bon, je vois mes ingrédients"
+                          : `✓ Importer (${scanPhases.items.filter((i) => i.selected).length})`}
                       </Btn>
                     </div>
                   </div>
@@ -3842,7 +4126,8 @@ Réponds UNIQUEMENT en JSON valide :
         />
       )}
     </>
-  )
+    )
+  }
 
   // ── Equipment Tab ──────────────────────────────────────────────
   const renderEquipement = () => (
@@ -4976,6 +5261,29 @@ Réponds UNIQUEMENT en JSON valide :
 
       {/* Anchor pour le scroll auto */}
       <div ref={recipeResultRef} />
+
+      {/* Phase 3 de l'onboarding — rend explicite le lien avec ce qui
+          vient d'être importé, plutôt qu'une recette qui apparaît sans
+          contexte. Masqué si la génération a échoué (id 'err') : la carte
+          d'erreur normale parle déjà d'elle-même, pas besoin d'un
+          bandeau "voilà ce que tu peux cuisiner" à côté d'une erreur. */}
+      {onboardingMode && recipeResult && recipeResult[0]?.id !== 'err' && (
+        <div
+          style={{
+            textAlign: 'center',
+            padding: '14px',
+            marginBottom: '14px',
+            borderRadius: '14px',
+            background: `${C.green}12`,
+            border: `1px solid ${C.green}40`,
+          }}
+        >
+          <div style={{ fontSize: '22px', marginBottom: '4px' }}>🎉</div>
+          <div style={{ fontSize: '14px', fontWeight: 700, color: C.green }}>
+            Voilà ce que tu peux cuisiner avec ce que tu viens d'importer
+          </div>
+        </div>
+      )}
 
       {recipeResult &&
         recipeResult.map((recipe, idx) => {
