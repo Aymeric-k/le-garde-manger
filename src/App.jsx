@@ -6277,20 +6277,15 @@ Réponds UNIQUEMENT en JSON valide :
             <img
               src='/app/logo_kesoir.png'
               alt='Kësoir'
-              style={{ width: '80px', height: '80px', objectFit: 'contain', borderRadius: '10px' }}
+              style={{ width: '56px', height: '56px', objectFit: 'contain', borderRadius: '10px' }}
             />
-            <div>
-              <div style={st.title}>Kësoir</div>
-              <div style={st.sub}>
-                {ingredients.length} ingr. · {equipment.length} équip. · {users.length} convive
-                {users.length !== 1 ? 's' : ''} · <em>On mange quoi ce soir ?</em>
-              </div>
-            </div>
+            <div style={st.title}>Kësoir</div>
           </div>
 
-          <div
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}
-          >
+          {/* Une seule ligne : les 2 boutons empilés (colonne) prenaient
+              autant de hauteur que le titre+sous-titre, ce qui forçait le
+              sous-titre à se replier sur 2 lignes faute de place. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <a
               href='/roadmap'
               target='_blank'
@@ -6300,11 +6295,11 @@ Réponds UNIQUEMENT en JSON valide :
                 fontWeight: 700,
                 color: C.textLight,
                 textDecoration: 'none',
-                padding: '6px 12px',
+                padding: '6px 10px',
                 borderRadius: '999px',
                 border: `1px solid ${C.border}`,
                 background: C.bgInset,
-                letterSpacing: '0.5px',
+                whiteSpace: 'nowrap',
               }}
             >
               🗺️ Roadmap
@@ -6318,12 +6313,13 @@ Réponds UNIQUEMENT en JSON valide :
                     fontSize: '11px',
                     fontWeight: 700,
                     color: C.green,
-                    padding: '6px 12px',
+                    padding: '6px 10px',
                     borderRadius: '999px',
                     border: `1px solid ${C.green}50`,
                     background: `${C.green}12`,
                     cursor: 'pointer',
                     fontFamily: "'Inter',sans-serif",
+                    whiteSpace: 'nowrap',
                   }}
                   title={user?.email}
                 >
@@ -6336,18 +6332,26 @@ Réponds UNIQUEMENT en JSON valide :
                     fontSize: '11px',
                     fontWeight: 700,
                     color: C.brown,
-                    padding: '6px 12px',
+                    padding: '6px 10px',
                     borderRadius: '999px',
                     border: `1px solid ${C.brown}50`,
                     background: `${C.brown}12`,
                     cursor: 'pointer',
                     fontFamily: "'Inter',sans-serif",
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   🔐 Se connecter
                 </button>
               ))}
           </div>
+        </div>
+
+        {/* Sous-titre sur toute la largeur du header plutôt que coincé à
+            côté du logo — une seule ligne au lieu de 2. */}
+        <div style={st.sub}>
+          {ingredients.length} ingr. · {equipment.length} équip. · {users.length} convive
+          {users.length !== 1 ? 's' : ''} · <em>On mange quoi ce soir ?</em>
         </div>
       </div>
 
