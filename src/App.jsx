@@ -1,4 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
+import {
+  Refrigerator,
+  ChefHat,
+  Sparkles,
+  ShoppingCart,
+  Map,
+  Lock,
+  Check,
+  ScanLine,
+  FileText,
+} from 'lucide-react'
 import TicketCamera from './components/TicketCamera'
 import BarcodeScanner from './components/BarcodeScanner'
 import { searchProduct, getProductByBarcode } from './services/openFoodFacts'
@@ -2947,6 +2958,10 @@ Réponds UNIQUEMENT en JSON valide :
     },
     tab: (a) => ({
       flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: '3px',
       padding: '11px 4px',
       fontSize: '10px',
       fontWeight: a ? 700 : 400,
@@ -3089,7 +3104,7 @@ Réponds UNIQUEMENT en JSON valide :
           fontFamily: "'Inter',sans-serif",
         }}
       >
-        <span style={{ fontSize: '26px' }}>📄</span>
+        <FileText size={26} color={C.brown} strokeWidth={1.75} />
         <span style={{ fontSize: '14px', fontWeight: 700, color: C.brown }}>
           As-tu une facture ou confirmation de commande drive récente ?
         </span>
@@ -3130,7 +3145,7 @@ Réponds UNIQUEMENT en JSON valide :
           fontFamily: "'Inter',sans-serif",
         }}
       >
-        <span style={{ fontSize: '22px' }}>🧾</span>
+        <ScanLine size={22} color={C.green} strokeWidth={1.75} />
         <span style={{ fontSize: '13px', fontWeight: 700, color: C.green }}>
           Ou un ticket de caisse sous la main ?
         </span>
@@ -3254,7 +3269,7 @@ Réponds UNIQUEMENT en JSON valide :
               WebkitTapHighlightColor: 'transparent',
             }}
           >
-            <span style={{ fontSize: '22px' }}>🧾</span>
+            <ScanLine size={22} color={C.green} strokeWidth={1.75} />
             <span style={{ fontSize: '12px', fontWeight: 700, color: C.green }}>
               Scanner un ticket
             </span>
@@ -3278,7 +3293,7 @@ Réponds UNIQUEMENT en JSON valide :
               position: 'relative',
             }}
           >
-            <span style={{ fontSize: '22px' }}>📄</span>
+            <FileText size={22} color={C.brown} strokeWidth={1.75} />
             <span style={{ fontSize: '12px', fontWeight: 700, color: C.brown }}>
               Commande drive (PDF)
             </span>
@@ -5256,7 +5271,14 @@ Réponds UNIQUEMENT en JSON valide :
       </Card>
 
       <Btn onClick={generateRecipes} disabled={ingredients.length < 3 || recipeLoading}>
-        {recipeLoading ? '🍳 Le chef réfléchit...' : "✨ Qu'est-ce qu'on s'fait à soir ?"}
+        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+          {recipeLoading ? (
+            <ChefHat size={16} />
+          ) : (
+            <Sparkles size={16} />
+          )}
+          {recipeLoading ? 'Le chef réfléchit...' : "Qu'est-ce qu'on s'fait à soir ?"}
+        </span>
       </Btn>
 
       {recipeLoading && (
@@ -6291,6 +6313,9 @@ Réponds UNIQUEMENT en JSON valide :
               target='_blank'
               rel='noopener noreferrer'
               style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
                 fontSize: '11px',
                 fontWeight: 700,
                 color: C.textLight,
@@ -6302,7 +6327,7 @@ Réponds UNIQUEMENT en JSON valide :
                 whiteSpace: 'nowrap',
               }}
             >
-              🗺️ Roadmap
+              <Map size={12} /> Roadmap
             </a>
 
             {!authLoading &&
@@ -6310,6 +6335,9 @@ Réponds UNIQUEMENT en JSON valide :
                 <button
                   onClick={logout}
                   style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
                     fontSize: '11px',
                     fontWeight: 700,
                     color: C.green,
@@ -6323,12 +6351,15 @@ Réponds UNIQUEMENT en JSON valide :
                   }}
                   title={user?.email}
                 >
-                  ✓ {user?.displayName?.split(' ')[0] || 'Connecté'}
+                  <Check size={12} /> {user?.displayName?.split(' ')[0] || 'Connecté'}
                 </button>
               ) : (
                 <button
                   onClick={login}
                   style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
                     fontSize: '11px',
                     fontWeight: 700,
                     color: C.brown,
@@ -6341,7 +6372,7 @@ Réponds UNIQUEMENT en JSON valide :
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  🔐 Se connecter
+                  <Lock size={12} /> Se connecter
                 </button>
               ))}
           </div>
@@ -6358,12 +6389,13 @@ Réponds UNIQUEMENT en JSON valide :
       {/* Tabs */}
       <div style={st.tabs}>
         {[
-          { id: 'frigo', label: '🥦 Frigo' },
-          { id: 'equipement', label: '🍳 Équip.' },
-          { id: 'recettes', label: '✨ Recettes' },
-          { id: 'courses', label: '🛒 Courses' },
+          { id: 'frigo', label: 'Frigo', Icon: Refrigerator },
+          { id: 'equipement', label: 'Équip.', Icon: ChefHat },
+          { id: 'recettes', label: 'Recettes', Icon: Sparkles },
+          { id: 'courses', label: 'Courses', Icon: ShoppingCart },
         ].map((t) => (
           <button key={t.id} style={st.tab(tab === t.id)} onClick={() => setTab(t.id)}>
+            <t.Icon size={18} strokeWidth={tab === t.id ? 2.25 : 1.75} />
             {t.label}
           </button>
         ))}
