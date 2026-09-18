@@ -7,7 +7,12 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'autoUpdate' active le nouveau service worker en silence — un
+      // onglet déjà ouvert reste sur l'ancien JS tant qu'il n'est pas
+      // rechargé manuellement, invisible pour l'utilisateur. 'prompt'
+      // laisse App.jsx détecter la nouvelle version via useRegisterSW
+      // (voir main.jsx) et proposer un vrai bouton "Recharger".
+      registerType: 'prompt',
       base: '/app/',
       scope: '/',
       workbox: {
@@ -29,8 +34,8 @@ export default defineConfig({
         name: 'Kësoir',
         short_name: 'Kësoir',
         description: 'Ton inventaire, tes recettes, tes courses',
-        theme_color: '#6b4226',
-        background_color: '#f5f0e8',
+        theme_color: '#d9603d',
+        background_color: '#faf6f1',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/app/',
