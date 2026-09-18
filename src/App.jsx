@@ -22,27 +22,31 @@ import {
 } from './hooks/useFirestoreDoc'
 
 // ─── Palette & Design Tokens ───────────────────────────────────────────────
+// "Golden hour contrasté" — un seul accent fort (terracotta) plutôt que le
+// brun+vert+beige qui se diluait. Texte quasi-noir pour du vrai contraste.
+// Les clés restent identiques à l'ancienne palette (des centaines d'usages
+// dans tout le fichier) — seules les valeurs changent.
 const C = {
-  bg: '#f5f0e8', // parchemin chaud
-  bgDeep: '#ede6d6', // parchemin foncé
-  bgCard: '#faf7f0', // carte crème
-  bgInset: '#ede8dc', // input inset
-  brown: '#6b4226', // brun principal
-  brownMid: '#9c6644', // brun moyen
-  brownLight: '#c49a72', // brun clair
-  green: '#4a7c59', // vert sauge foncé
-  greenMid: '#6a9e78', // vert sauge
-  greenLight: '#a8c5a0', // vert clair
-  terra: '#c1602a', // terre cuite accent
-  terraLight: '#e8956a', // terre cuite clair
-  text: '#3a2a1a', // texte principal
-  textMid: '#7a5c40', // texte secondaire
-  textLight: '#b0987a', // texte léger
-  border: '#ddd0b8', // bordure
-  borderDark: '#c4af90', // bordure foncée
-  warning: '#c1602a', // alerte = terre cuite
-  ok: '#4a7c59', // ok = vert
-  star: '#d4a017', // étoile doré
+  bg: '#faf6f1', // blanc cassé chaud
+  bgDeep: '#f0e8dd', // un cran plus marqué (header, zones de distinction)
+  bgCard: '#ffffff', // cartes blanches nettes
+  bgInset: '#f1eae1', // inputs, fond neutre des badges
+  brown: '#262220', // quasi-noir chaud — titres et texte fort
+  brownMid: '#5c534c', // gris chaud — texte secondaire
+  brownLight: '#b8aa9c', // gris-beige discret — bordures décoratives
+  green: '#5c8268', // vert sauge éteint — signal fonctionnel, pas un 2e accent
+  greenMid: '#7da085', // variante claire (hover, fonds légers)
+  greenLight: '#c7d9c9', // fond très clair (badges succès)
+  terra: '#d9603d', // L'accent — terracotta vif, unique
+  terraLight: '#f2a688', // variante claire de l'accent
+  text: '#262220', // texte principal quasi-noir
+  textMid: '#6b6259', // texte secondaire
+  textLight: '#a69c90', // texte tertiaire
+  border: '#e6ddd0', // bordure discrète
+  borderDark: '#d3c6b5', // bordure plus marquée
+  warning: '#d9603d', // alerte = l'accent
+  ok: '#5c8268', // ok = vert fonctionnel
+  star: '#d9a03d', // étoile dorée, dans la teinte de l'accent
 }
 
 // ─── Data ──────────────────────────────────────────────────────────────────
@@ -263,7 +267,7 @@ function DlcBadge({ dlc }) {
         background: color + '20',
         color,
         border: `1px solid ${color}50`,
-        fontFamily: "'Lato',sans-serif",
+        fontFamily: "'Inter',sans-serif",
       }}
     >
       {label}
@@ -296,17 +300,20 @@ function Stars({ value, onChange, size = 18 }) {
 }
 
 function Pill({ label, color }) {
+  // Fond neutre + couleur portée par le texte seul, plutôt qu'un badge
+  // teinté avec fond ET bordure de la même couleur — sur une carte qui
+  // affiche 3-4 pills (catégorie, stockage, quantité, prix), l'ancien
+  // rendu les faisait toutes se battre pour l'attention au même niveau.
   return (
     <span
       style={{
         fontSize: '10px',
-        fontWeight: 700,
+        fontWeight: 600,
         padding: '2px 8px',
-        borderRadius: '999px',
-        background: color + '22',
+        borderRadius: '6px',
+        background: C.bgInset,
         color,
-        border: `1px solid ${color}40`,
-        fontFamily: "'Lato',sans-serif",
+        fontFamily: "'Inter',sans-serif",
       }}
     >
       {label}
@@ -317,27 +324,27 @@ function Pill({ label, color }) {
 function Btn({ children, onClick, disabled, variant = 'primary', small = false }) {
   const base = {
     border: 'none',
-    borderRadius: '12px',
+    borderRadius: '10px',
     cursor: disabled ? 'not-allowed' : 'pointer',
-    fontFamily: "'Playfair Display',serif",
+    fontFamily: "'Fraunces',serif",
     fontWeight: 700,
     transition: 'all 0.18s',
     opacity: disabled ? 0.5 : 1,
   }
   const variants = {
     primary: {
-      background: `linear-gradient(135deg,${C.brown},${C.brownMid})`,
+      background: C.terra,
       color: '#fff',
       padding: small ? '8px 14px' : '13px 20px',
       fontSize: small ? '12px' : '14px',
-      boxShadow: `0 3px 12px ${C.brown}40`,
+      boxShadow: `0 1px 3px ${C.brown}25`,
     },
     green: {
-      background: `linear-gradient(135deg,${C.green},${C.greenMid})`,
+      background: C.green,
       color: '#fff',
       padding: small ? '8px 14px' : '13px 20px',
       fontSize: small ? '12px' : '14px',
-      boxShadow: `0 3px 12px ${C.green}40`,
+      boxShadow: `0 1px 3px ${C.brown}25`,
     },
     outline: {
       background: 'transparent',
@@ -386,7 +393,7 @@ function Input({ placeholder, value, onChange, type = 'text', multiline = false 
     fontSize: '14px',
     width: '100%',
     boxSizing: 'border-box',
-    fontFamily: "'Lato',sans-serif",
+    fontFamily: "'Inter',sans-serif",
     outline: 'none',
     resize: multiline ? 'vertical' : 'none',
   }
@@ -420,7 +427,7 @@ function Select({ value, onChange, children }) {
         fontSize: '14px',
         width: '100%',
         boxSizing: 'border-box',
-        fontFamily: "'Lato',sans-serif",
+        fontFamily: "'Inter',sans-serif",
       }}
       value={value}
       onChange={(e) => onChange(e.target.value)}
@@ -440,7 +447,7 @@ function SectionLabel({ children }) {
         textTransform: 'uppercase',
         letterSpacing: '1px',
         marginBottom: '10px',
-        fontFamily: "'Lato',sans-serif",
+        fontFamily: "'Inter',sans-serif",
       }}
     >
       {children}
@@ -496,7 +503,7 @@ function ManualCartAdd({ onAdd }) {
             background: isFood ? '#4a7c5918' : '#faf7f0',
             color: isFood ? '#4a7c59' : '#b0987a',
             cursor: 'pointer',
-            fontFamily: "'Lato',sans-serif",
+            fontFamily: "'Inter',sans-serif",
           }}
         >
           🥦 Alimentaire
@@ -513,7 +520,7 @@ function ManualCartAdd({ onAdd }) {
             background: !isFood ? '#c1602a18' : '#faf7f0',
             color: !isFood ? '#c1602a' : '#b0987a',
             cursor: 'pointer',
-            fontFamily: "'Lato',sans-serif",
+            fontFamily: "'Inter',sans-serif",
           }}
         >
           🧴 Maison
@@ -535,7 +542,7 @@ function ManualCartAdd({ onAdd }) {
             padding: '9px 11px',
             color: '#3a2a1a',
             fontSize: '14px',
-            fontFamily: "'Lato',sans-serif",
+            fontFamily: "'Inter',sans-serif",
             outline: 'none',
           }}
         />
@@ -552,7 +559,7 @@ function ManualCartAdd({ onAdd }) {
             padding: '9px 8px',
             color: '#3a2a1a',
             fontSize: '13px',
-            fontFamily: "'Lato',sans-serif",
+            fontFamily: "'Inter',sans-serif",
             outline: 'none',
             textAlign: 'center',
           }}
@@ -568,7 +575,7 @@ function ManualCartAdd({ onAdd }) {
             padding: '9px 4px',
             color: '#3a2a1a',
             fontSize: '11px',
-            fontFamily: "'Lato',sans-serif",
+            fontFamily: "'Inter',sans-serif",
           }}
         >
           {['pièce(s)', 'g', 'kg', 'ml', 'L', 'boîte(s)', 'sachet(s)', 'rouleau(x)'].map((u) => (
@@ -578,7 +585,7 @@ function ManualCartAdd({ onAdd }) {
         <button
           onClick={submit}
           style={{
-            background: 'linear-gradient(135deg,#4a7c59,#6a9e78)',
+            background: C.green,
             color: '#fff',
             border: 'none',
             borderRadius: '10px',
@@ -2912,17 +2919,17 @@ Réponds UNIQUEMENT en JSON valide :
       minHeight: '100vh',
       background: C.bg,
       color: C.text,
-      fontFamily: "'Lato',sans-serif",
+      fontFamily: "'Inter',sans-serif",
       maxWidth: '430px',
       margin: '0 auto',
     },
     header: {
       padding: '20px 18px 14px',
-      background: `linear-gradient(160deg,${C.bgDeep},${C.bg})`,
+      background: C.bgDeep,
       borderBottom: `1.5px solid ${C.border}`,
     },
     title: {
-      fontFamily: "'Playfair Display',serif",
+      fontFamily: "'Fraunces',serif",
       fontSize: '26px',
       fontWeight: 900,
       color: C.brown,
@@ -2948,7 +2955,7 @@ Réponds UNIQUEMENT en JSON valide :
       border: 'none',
       borderBottom: a ? `2.5px solid ${C.brown}` : '2.5px solid transparent',
       cursor: 'pointer',
-      fontFamily: "'Lato',sans-serif",
+      fontFamily: "'Inter',sans-serif",
       letterSpacing: '0.3px',
     }),
     content: { padding: '14px 14px 90px' },
@@ -2971,7 +2978,7 @@ Réponds UNIQUEMENT en JSON valide :
       color: a ? C.brown : C.textLight,
       cursor: 'pointer',
       whiteSpace: 'nowrap',
-      fontFamily: "'Lato',sans-serif",
+      fontFamily: "'Inter',sans-serif",
     }),
     energyBtn: (a) => ({
       padding: '10px 13px',
@@ -2983,7 +2990,7 @@ Réponds UNIQUEMENT en JSON valide :
       color: a ? C.green : C.textMid,
       cursor: 'pointer',
       marginBottom: '6px',
-      fontFamily: "'Lato',sans-serif",
+      fontFamily: "'Inter',sans-serif",
     }),
     recipeCard: {
       background: C.bgCard,
@@ -3001,7 +3008,7 @@ Réponds UNIQUEMENT en JSON valide :
       color: c,
       fontWeight: 700,
       border: `1px solid ${c}40`,
-      fontFamily: "'Lato',sans-serif",
+      fontFamily: "'Inter',sans-serif",
     }),
     ratingPanel: {
       position: 'fixed',
@@ -3044,7 +3051,7 @@ Réponds UNIQUEMENT en JSON valide :
       <div style={{ fontSize: '44px', marginBottom: '4px' }}>🏺</div>
       <div
         style={{
-          fontFamily: "'Playfair Display',serif",
+          fontFamily: "'Fraunces',serif",
           fontSize: '20px',
           fontWeight: 700,
           color: C.brown,
@@ -3074,12 +3081,12 @@ Réponds UNIQUEMENT en JSON valide :
           gap: '5px',
           padding: '20px 16px',
           borderRadius: '18px',
-          background: `linear-gradient(135deg,${C.brown}20,${C.brown}0a)`,
+          background: `${C.brown}10`,
           border: `2px solid ${C.brown}70`,
           cursor: 'pointer',
           marginBottom: '12px',
           position: 'relative',
-          fontFamily: "'Lato',sans-serif",
+          fontFamily: "'Inter',sans-serif",
         }}
       >
         <span style={{ fontSize: '26px' }}>📄</span>
@@ -3117,10 +3124,10 @@ Réponds UNIQUEMENT en JSON valide :
           gap: '5px',
           padding: '16px',
           borderRadius: '18px',
-          background: `linear-gradient(135deg,${C.green}18,${C.green}08)`,
+          background: `${C.green}0d`,
           border: `2px solid ${C.green}60`,
           cursor: 'pointer',
-          fontFamily: "'Lato',sans-serif",
+          fontFamily: "'Inter',sans-serif",
         }}
       >
         <span style={{ fontSize: '22px' }}>🧾</span>
@@ -3219,7 +3226,7 @@ Réponds UNIQUEMENT en JSON valide :
                 background: fridgeSubTab === t.id ? `${C.brown}12` : C.bgInset,
                 color: fridgeSubTab === t.id ? C.brown : C.textLight,
                 cursor: 'pointer',
-                fontFamily: "'Lato',sans-serif",
+                fontFamily: "'Inter',sans-serif",
               }}
             >
               {t.label}
@@ -3240,10 +3247,10 @@ Réponds UNIQUEMENT en JSON valide :
               gap: '4px',
               padding: '14px 8px',
               borderRadius: '14px',
-              background: `linear-gradient(135deg,${C.green}20,${C.green}0a)`,
+              background: `${C.green}10`,
               border: `2px solid ${C.green}70`,
               cursor: 'pointer',
-              fontFamily: "'Lato',sans-serif",
+              fontFamily: "'Inter',sans-serif",
               WebkitTapHighlightColor: 'transparent',
             }}
           >
@@ -3263,10 +3270,10 @@ Réponds UNIQUEMENT en JSON valide :
               gap: '4px',
               padding: '14px 8px',
               borderRadius: '14px',
-              background: `linear-gradient(135deg,${C.brown}20,${C.brown}0a)`,
+              background: `${C.brown}10`,
               border: `2px solid ${C.brown}70`,
               cursor: 'pointer',
-              fontFamily: "'Lato',sans-serif",
+              fontFamily: "'Inter',sans-serif",
               WebkitTapHighlightColor: 'transparent',
               position: 'relative',
             }}
@@ -3788,7 +3795,7 @@ Réponds UNIQUEMENT en JSON valide :
                 <>
                   <div
                     style={{
-                      fontFamily: "'Playfair Display',serif",
+                      fontFamily: "'Fraunces',serif",
                       fontSize: '18px',
                       fontWeight: 700,
                       color: C.brown,
@@ -3999,7 +4006,7 @@ Réponds UNIQUEMENT en JSON valide :
                                   fontSize: '11px',
                                   fontWeight: 600,
                                   cursor: 'pointer',
-                                  fontFamily: "'Lato',sans-serif",
+                                  fontFamily: "'Inter',sans-serif",
                                 }}
                               >
                                 ✏️ Corriger
@@ -4017,7 +4024,7 @@ Réponds UNIQUEMENT en JSON valide :
                                     fontSize: '11px',
                                     fontWeight: 600,
                                     cursor: 'pointer',
-                                    fontFamily: "'Lato',sans-serif",
+                                    fontFamily: "'Inter',sans-serif",
                                   }}
                                 >
                                   🔍 Chercher une fiche
@@ -4260,7 +4267,7 @@ Réponds UNIQUEMENT en JSON valide :
                   padding: '10px 13px',
                   color: C.text,
                   fontSize: '16px',
-                  fontFamily: "'Lato',sans-serif",
+                  fontFamily: "'Inter',sans-serif",
                   outline: 'none',
                   WebkitTextFillColor: C.text,
                 }}
@@ -4268,7 +4275,7 @@ Réponds UNIQUEMENT en JSON valide :
               <button
                 onClick={addUser}
                 style={{
-                  background: `linear-gradient(135deg,${C.green},${C.greenMid})`,
+                  background: C.green,
                   color: '#fff',
                   border: 'none',
                   borderRadius: '10px',
@@ -4649,7 +4656,7 @@ Réponds UNIQUEMENT en JSON valide :
                         style={{
                           fontWeight: 700,
                           fontSize: '15px',
-                          fontFamily: "'Playfair Display',serif",
+                          fontFamily: "'Fraunces',serif",
                           color: C.brown,
                         }}
                       >
@@ -4788,10 +4795,10 @@ Réponds UNIQUEMENT en JSON valide :
               gap: '4px',
               padding: '12px 8px',
               borderRadius: '14px',
-              background: `linear-gradient(135deg,${C.terra}20,${C.terra}0a)`,
+              background: `${C.terra}10`,
               border: `2px solid ${C.terra}70`,
               cursor: 'pointer',
-              fontFamily: "'Lato',sans-serif",
+              fontFamily: "'Inter',sans-serif",
             }}
           >
             <span style={{ fontSize: '20px' }}>📖</span>
@@ -4818,10 +4825,10 @@ Réponds UNIQUEMENT en JSON valide :
               gap: '4px',
               padding: '12px 8px',
               borderRadius: '14px',
-              background: `linear-gradient(135deg,${C.brown}20,${C.brown}0a)`,
+              background: `${C.brown}10`,
               border: `2px solid ${C.brown}70`,
               cursor: 'pointer',
-              fontFamily: "'Lato',sans-serif",
+              fontFamily: "'Inter',sans-serif",
             }}
           >
             <span style={{ fontSize: '20px' }}>🔗</span>
@@ -4846,7 +4853,7 @@ Réponds UNIQUEMENT en JSON valide :
                 padding: '10px 13px',
                 color: C.text,
                 fontSize: '13px',
-                fontFamily: "'Lato',sans-serif",
+                fontFamily: "'Inter',sans-serif",
                 outline: 'none',
                 resize: 'vertical',
               }}
@@ -4881,7 +4888,7 @@ Réponds UNIQUEMENT en JSON valide :
                 background: energyLevel === e.id ? `${C.green}12` : C.bgInset,
                 color: energyLevel === e.id ? C.green : C.textMid,
                 cursor: 'pointer',
-                fontFamily: "'Lato',sans-serif",
+                fontFamily: "'Inter',sans-serif",
               }}
             >
               <div style={{ fontWeight: 700, fontSize: '12px' }}>{e.label}</div>
@@ -5010,7 +5017,7 @@ Réponds UNIQUEMENT en JSON valide :
                   background: tolerance === t.id ? `${C.green}15` : C.bgInset,
                   color: tolerance === t.id ? C.green : C.textLight,
                   cursor: 'pointer',
-                  fontFamily: "'Lato',sans-serif",
+                  fontFamily: "'Inter',sans-serif",
                   textAlign: 'center',
                 }}
               >
@@ -5220,7 +5227,7 @@ Réponds UNIQUEMENT en JSON valide :
                   background: C.bgCard,
                   color: C.text,
                   fontSize: '12px',
-                  fontFamily: "'Lato',sans-serif",
+                  fontFamily: "'Inter',sans-serif",
                   textAlign: 'center',
                 }}
               />
@@ -5303,7 +5310,7 @@ Réponds UNIQUEMENT en JSON valide :
                       style={{
                         fontWeight: 700,
                         fontSize: '15px',
-                        fontFamily: "'Playfair Display',serif",
+                        fontFamily: "'Fraunces',serif",
                         color: C.brown,
                       }}
                     >
@@ -5395,7 +5402,7 @@ Réponds UNIQUEMENT en JSON valide :
                           color: C.brown,
                           minWidth: '24px',
                           textAlign: 'center',
-                          fontFamily: "'Playfair Display',serif",
+                          fontFamily: "'Fraunces',serif",
                         }}
                       >
                         {getPortions(recipe)}
@@ -5655,7 +5662,7 @@ Réponds UNIQUEMENT en JSON valide :
                         background: isRecipeSaved(recipe.nom) ? `${C.brown}20` : 'transparent',
                         color: isRecipeSaved(recipe.nom) ? C.brown : C.textLight,
                         cursor: 'pointer',
-                        fontFamily: "'Playfair Display',serif",
+                        fontFamily: "'Fraunces',serif",
                       }}
                     >
                       {isRecipeSaved(recipe.nom) ? '🔖 Sauvegardée' : '🔖 Sauvegarder'}
@@ -5823,7 +5830,7 @@ Réponds UNIQUEMENT en JSON valide :
                       border: isActive ? `2px solid ${C.brown}` : `1px solid ${C.border}`,
                       background: isActive ? `${C.brown}15` : C.bgInset,
                       cursor: 'pointer',
-                      fontFamily: "'Lato',sans-serif",
+                      fontFamily: "'Inter',sans-serif",
                       minWidth: '80px',
                     }}
                   >
@@ -6176,7 +6183,7 @@ Réponds UNIQUEMENT en JSON valide :
         <div style={st.ratingSheet}>
           <div
             style={{
-              fontFamily: "'Playfair Display',serif",
+              fontFamily: "'Fraunces',serif",
               fontSize: '18px',
               fontWeight: 700,
               color: C.brown,
@@ -6257,7 +6264,7 @@ Réponds UNIQUEMENT en JSON valide :
   return (
     <div style={st.app}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Lato:wght@400;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700;900&family=Inter:wght@400;500;600;700&display=swap');
         * { box-sizing:border-box; margin:0; padding:0; }
         ::-webkit-scrollbar { display:none; }
         input[type=date]::-webkit-calendar-picker-indicator { filter: opacity(0.4); }
@@ -6316,7 +6323,7 @@ Réponds UNIQUEMENT en JSON valide :
                     border: `1px solid ${C.green}50`,
                     background: `${C.green}12`,
                     cursor: 'pointer',
-                    fontFamily: "'Lato',sans-serif",
+                    fontFamily: "'Inter',sans-serif",
                   }}
                   title={user?.email}
                 >
@@ -6334,7 +6341,7 @@ Réponds UNIQUEMENT en JSON valide :
                     border: `1px solid ${C.brown}50`,
                     background: `${C.brown}12`,
                     cursor: 'pointer',
-                    fontFamily: "'Lato',sans-serif",
+                    fontFamily: "'Inter',sans-serif",
                   }}
                 >
                   🔐 Se connecter
@@ -6381,7 +6388,7 @@ Réponds UNIQUEMENT en JSON valide :
           <div style={{ ...st.ratingSheet, maxHeight: '85vh', overflowY: 'auto' }}>
             <div
               style={{
-                fontFamily: "'Playfair Display',serif",
+                fontFamily: "'Fraunces',serif",
                 fontSize: '18px',
                 fontWeight: 700,
                 color: pendingBarcodeProduct.notFound ? C.terra : C.green,
@@ -6587,7 +6594,7 @@ Réponds UNIQUEMENT en JSON valide :
                 <div style={{ fontSize: '32px', marginBottom: '12px' }}>📖</div>
                 <div
                   style={{
-                    fontFamily: "'Playfair Display',serif",
+                    fontFamily: "'Fraunces',serif",
                     fontSize: '16px',
                     color: C.brown,
                     marginBottom: '6px',
@@ -6620,7 +6627,7 @@ Réponds UNIQUEMENT en JSON valide :
                 <>
                   <div
                     style={{
-                      fontFamily: "'Playfair Display',serif",
+                      fontFamily: "'Fraunces',serif",
                       fontSize: '18px',
                       fontWeight: 700,
                       color: C.brown,
@@ -6878,7 +6885,7 @@ Réponds UNIQUEMENT en JSON valide :
           <div style={{ ...st.ratingSheet, maxHeight: '85vh', overflowY: 'auto' }}>
             <div
               style={{
-                fontFamily: "'Playfair Display',serif",
+                fontFamily: "'Fraunces',serif",
                 fontSize: '18px',
                 fontWeight: 700,
                 color: C.terra,
@@ -6950,7 +6957,7 @@ Réponds UNIQUEMENT en JSON valide :
                 >
                   <div
                     style={{
-                      fontFamily: "'Playfair Display',serif",
+                      fontFamily: "'Fraunces',serif",
                       fontWeight: 700,
                       color: C.terra,
                       fontSize: '15px',
@@ -7040,7 +7047,7 @@ Réponds UNIQUEMENT en JSON valide :
           <div style={st.ratingSheet}>
             <div
               style={{
-                fontFamily: "'Playfair Display',serif",
+                fontFamily: "'Fraunces',serif",
                 fontSize: '18px',
                 fontWeight: 700,
                 color: C.brown,
